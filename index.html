@@ -84,11 +84,21 @@
                 </div>
                 <span id="master-set-count" class="view-count"></span>
             </div>
-            <div class="pokedex-search field">
-                <label for="master-set-search">Search sets and cards</label>
-                <div class="search-control">
-                    <input id="master-set-search" type="search" placeholder="Set, card, or Pokémon + card number..." autocomplete="off">
-                    <button class="clear-search" id="clear-master-set-search" type="button" aria-label="Clear Master Sets search" hidden>×</button>
+            <div class="master-set-controls">
+                <div class="pokedex-search field">
+                    <label for="master-set-search">Search sets and cards</label>
+                    <div class="search-control">
+                        <input id="master-set-search" type="search" placeholder="Set, card, or Pokémon + card number..." autocomplete="off">
+                        <button class="clear-search" id="clear-master-set-search" type="button" aria-label="Clear Master Sets search" hidden>×</button>
+                    </div>
+                </div>
+                <div class="field master-set-sort">
+                    <label for="master-set-sort">Sort sets</label>
+                    <select id="master-set-sort">
+                        <option value="release">Release order</option>
+                        <option value="most-complete">Most complete</option>
+                        <option value="least-complete">Least complete</option>
+                    </select>
                 </div>
             </div>
             <div id="master-set-list" class="master-set-list"></div>

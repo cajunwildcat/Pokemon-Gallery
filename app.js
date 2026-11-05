@@ -14,6 +14,7 @@
         const pokedexGrid = document.getElementById("pokedex-grid");
         const pokedexSearch = document.getElementById("pokedex-search");
         const masterSetSearch = document.getElementById("master-set-search");
+        const masterSetSort = document.getElementById("master-set-sort");
         const tabs = [...document.querySelectorAll(".view-tab")];
         let collection = [];
         let databaseSets = {};
@@ -330,8 +331,27 @@
             masterSetList.replaceChildren();
             let visibleSetCount = 0;
             let matchingCardCount = 0;
-            for (const catalogSet of availableSets) {
+            const sets = availableSets.map((catalogSet, releaseOrder) => {
                 const setDetails = databaseSets[catalogSet.id];
+                const cardIds = setDetails?.cardIds || [];
+                const totalCount = cardIds.length || catalogSet.cardCount?.total || 0;
+                const ownedCount = cardIds.filter(cardId => {
+                    const cardDetails = allCardsById.get(normalizeCardId(cardId));
+                    return cardDetails && ownedCardsByApiId.has(normalizeCardId(cardDetails.id));
+                }).length;
+                return { catalogSet, setDetails, cardIds, ownedCount, totalCount, releaseOrder };
+            });
+            if (masterSetSort.value !== "release") {
+                sets.sort((a, b) => {
+                    const completionA = a.totalCount ? a.ownedCount / a.totalCount : 0;
+                    const completionB = b.totalCount ? b.ownedCount / b.totalCount : 0;
+                    const completionOrder = masterSetSort.value === "most-complete"
+                        ? completionB - completionA
+                        : completionA - completionB;
+                    return completionOrder || a.releaseOrder - b.releaseOrder;
+                });
+            }
+            for (const { catalogSet, setDetails, cardIds, ownedCount, totalCount } of sets) {
                 const setNameText = setDetails?.name || catalogSet.name || catalogSet.id;
                 const setMatches = query
                     && `${setNameText} ${catalogSet.id}`.toLocaleLowerCase().includes(query);
@@ -344,12 +364,6 @@
                 visibleSetCount += 1;
                 if (query && !setMatches) matchingCardCount += matchingCards.length;
 
-                const cardIds = setDetails?.cardIds || [];
-                const ownedCount = cardIds.filter(cardId => {
-                    const cardDetails = allCardsById.get(normalizeCardId(cardId));
-                    return cardDetails && ownedCardsByApiId.has(normalizeCardId(cardDetails.id));
-                }).length;
-                const totalCount = cardIds.length || catalogSet.cardCount?.total || 0;
                 const progress = totalCount ? Math.round((ownedCount / totalCount) * 100) : 0;
                 const setGroup = document.createElement("details");
                 setGroup.className = "master-set";
@@ -696,6 +710,7 @@
         searchInput.addEventListener("input", renderCollection);
         pokedexSearch.addEventListener("input", renderPokedex);
         masterSetSearch.addEventListener("input", debounce(renderMasterSetList, 250));
+        masterSetSort.addEventListener("change", renderMasterSetList);
         Object.values(filterElements).forEach(select => select.addEventListener("change", renderCollection));
         sortSelect.addEventListener("change", renderCollection);
         document.getElementById("reset-filters").addEventListener("click", () => {
