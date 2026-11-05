@@ -4,7 +4,8 @@ const path = require("node:path");
 const API_ROOT = "https://api.tcgdex.net/v2/en";
 const CONCURRENCY = 5;
 const SET_ID_MAPPINGS = {
-    base6: "lc"
+    base6: "lc",
+    mcd10p: "2021swsh"
 };
 const [outputArg = "tcgdex-database.json"] = process.argv.slice(2);
 const outputPath = path.resolve(outputArg);
@@ -83,10 +84,26 @@ async function mapLimit(items, limit, mapper) {
     return results;
 }
 
+async function loadExistingCards() {
+    let existingDatabase;
+    try {
+        existingDatabase = JSON.parse(await fs.readFile(outputPath, "utf8"));
+    } catch (error) {
+        if (error.code === "ENOENT") return {};
+        throw new Error(`Could not read existing database at ${outputPath}: ${errorMessage(error)}`);
+    }
+
+    if (!existingDatabase.cards || typeof existingDatabase.cards !== "object") {
+        throw new Error(`Existing database at ${outputPath} does not contain a cards object.`);
+    }
+    return existingDatabase.cards;
+}
+
 async function main() {
     try {
         await fs.mkdir(path.dirname(errorLogPath), { recursive: true });
         await fs.writeFile(errorLogPath, "", "utf8");
+        const existingCards = await loadExistingCards();
 
         let availableSets;
         try {
@@ -111,6 +128,7 @@ async function main() {
         const sets = {};
         const cards = {};
         let downloadedCardCount = 0;
+        let reusedCardCount = 0;
 
         for (const [index, setId] of orderedSetIds.entries()) {
             console.log(`Downloading ${setId} (${index + 1}/${orderedSetIds.length})`);
@@ -139,8 +157,17 @@ async function main() {
                     return null;
                 }
 
+                const normalizedId = normalizeCardId(listedCard.id);
+                const cachedCard = existingCards[normalizedId];
+                if (cachedCard?.id && normalizeCardId(cachedCard.id) === normalizedId) {
+                    return { card: cachedCard, reused: true };
+                }
+
                 try {
-                    return await fetchJson(`${API_ROOT}/cards/${encodeURIComponent(listedCard.id)}`);
+                    return {
+                        card: await fetchJson(`${API_ROOT}/cards/${encodeURIComponent(listedCard.id)}`),
+                        reused: false
+                    };
                 } catch (error) {
                     logError(errorMessage(error), {
                         stage: "card",
@@ -154,7 +181,8 @@ async function main() {
 
             const cardIds = [];
             const sourceSetIds = aliasesByCanonicalId.get(setId) || new Set();
-            for (const card of cardDetails.filter(Boolean)) {
+            for (const result of cardDetails.filter(Boolean)) {
+                const { card, reused } = result;
                 if (typeof card.id !== "string" || !card.id) {
                     logError("TCGdex returned card details without an ID.", {
                         stage: "card",
@@ -190,7 +218,8 @@ async function main() {
                     }
                     cards[sourceCardId] = cardData;
                 }
-                downloadedCardCount += 1;
+                if (reused) reusedCardCount += 1;
+                else downloadedCardCount += 1;
             }
 
             const { cards: listedCards, ...setMetadata } = setDetails;
@@ -211,7 +240,7 @@ async function main() {
         };
 
         await fs.writeFile(outputPath, `${JSON.stringify(database)}\n`, "utf8");
-        console.log(`Wrote ${downloadedCardCount} cards from ${Object.keys(sets).length} of ${orderedSetIds.length} sets to ${outputPath}`);
+        console.log(`Wrote ${downloadedCardCount} downloaded and ${reusedCardCount} reused cards from ${Object.keys(sets).length} of ${orderedSetIds.length} sets to ${outputPath}`);
         if (errors.length) {
             console.warn(`${errors.length} error(s) recorded in ${errorLogPath}`);
         } else {

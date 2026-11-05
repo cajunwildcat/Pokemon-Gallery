@@ -10,6 +10,7 @@
         const sortSelect = document.getElementById("sort-order");
         const dialog = document.getElementById("card-dialog");
         const artDialog = document.getElementById("art-dialog");
+        const missingImageUrl = "./assets/missing_image.webp";
         const masterSetList = document.getElementById("master-set-list");
         const pokedexGrid = document.getElementById("pokedex-grid");
         const pokedexSearch = document.getElementById("pokedex-search");
@@ -68,6 +69,22 @@
         function fallbackImageUrl(card) {
             const image = card.details?.image;
             return image ? `${image}/low.webp` : "";
+        }
+
+        function handleCardImageError(image, card, options = {}) {
+            const lowResolutionImage = fallbackImageUrl(card);
+            if (lowResolutionImage && image.dataset.lowResolutionTried !== "true") {
+                image.dataset.lowResolutionTried = "true";
+                image.src = lowResolutionImage;
+                return;
+            }
+            if (options.preserveImageAlt && options.onImageUnavailable?.(card)) return;
+            if (image.getAttribute("src") !== missingImageUrl) {
+                image.src = missingImageUrl;
+                return;
+            }
+            image.removeAttribute("src");
+            image.alt = options.alt || `${cardName(card)} card image unavailable`;
         }
 
         function cardName(card) { return card.details?.name || card.cardId; }
@@ -384,7 +401,12 @@
                     </summary>
                     <div class="master-set-content"></div>`;
                 const logo = setGroup.querySelector(".master-set-logo");
-                if (logo) logo.addEventListener("error", () => logo.remove(), { once: true });
+                if (logo) {
+                    logo.addEventListener("error", () => {
+                        if (logo.getAttribute("src") !== missingImageUrl) logo.src = missingImageUrl;
+                        else logo.removeAttribute("src");
+                    });
+                }
                 const content = setGroup.querySelector(".master-set-content");
                 const renderCards = () => {
                     if (setGroup.dataset.rendered) return;
@@ -448,7 +470,9 @@
                             if (nextCard) {
                                 entry.featuredCard = nextCard;
                                 cardElement.replaceWith(renderPokemonCard(nextCard));
+                                return true;
                             }
+                            return false;
                         } : null
                     });
                     cardElement.classList.add("pokemon-card");
@@ -523,7 +547,7 @@
             if (options.unowned) cardElement.classList.add("unowned");
             cardElement.innerHTML = `
                 <button class="card-image-button" type="button" aria-label="View ${escapeHtml(cardName(card))} details">
-                    <img class="card-image" ${imageUrl(card) ? `src="${escapeHtml(imageUrl(card))}"` : ""} alt="${escapeHtml(cardName(card))} Pokémon card" loading="lazy">
+                    <img class="card-image" src="${escapeHtml(imageUrl(card) || missingImageUrl)}" alt="${escapeHtml(cardName(card))} Pokémon card" loading="lazy">
                 </button>
                 <div class="card-info">
                     <div class="card-name-line">
@@ -542,15 +566,7 @@
                 </div>`;
             cardElement.querySelector(".card-image-button").addEventListener("click", () => renderDetails(card));
             const image = cardElement.querySelector("img");
-            image.addEventListener("error", () => {
-                const fallback = fallbackImageUrl(card);
-                if (fallback && image.src !== fallback) {
-                    image.src = fallback;
-                } else if (options.preserveImageAlt) {
-                    image.removeAttribute("src");
-                    options.onImageUnavailable?.(card);
-                } else image.alt = `${cardName(card)} card image unavailable`;
-            });
+            image.addEventListener("error", () => handleCardImageError(image, card, options));
             return cardElement;
         }
 
@@ -617,7 +633,7 @@
                     <button class="close-button" type="button" aria-label="Close card details">✕</button>
                 </div>
                 <div class="detail-layout">
-                    <img class="detail-image" src="${escapeHtml(imageUrl(card))}" alt="${escapeHtml(cardName(card))} Pokémon card">
+                    <img class="detail-image" src="${escapeHtml(imageUrl(card) || missingImageUrl)}" alt="${escapeHtml(cardName(card))} Pokémon card">
                     <div>
                         ${detailSection("Card", `<p>${escapeHtml(stats || "Card details unavailable")}${detail.rarity ? `<br>${escapeHtml(detail.rarity)}` : ""}<br>Owned ×${escapeHtml(card.count)}</p>`)}
                         ${variants ? detailSection("Variants", `<ul class="detail-list">${variants}</ul>`) : ""}
@@ -633,13 +649,10 @@
                 const enlargedImage = artDialog.querySelector(".enlarged-image");
                 enlargedImage.src = detailImage.currentSrc || detailImage.src;
                 enlargedImage.alt = detailImage.alt;
+                enlargedImage.onerror = () => handleCardImageError(enlargedImage, card);
                 artDialog.showModal();
             });
-            detailImage.addEventListener("error", () => {
-                const fallback = fallbackImageUrl(card);
-                if (fallback && detailImage.src !== fallback) detailImage.src = fallback;
-                else detailImage.alt = `${cardName(card)} card image unavailable`;
-            }, { once: true });
+            detailImage.addEventListener("error", () => handleCardImageError(detailImage, card));
             dialog.querySelector(".close-button").addEventListener("click", () => dialog.close());
             document.body.classList.add("dialog-open");
             dialog.showModal();

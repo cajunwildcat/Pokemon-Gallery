@@ -9,10 +9,10 @@
 ## Inventory and cache
 
 - `data.json` entries use `cardId`, `variantId`, and `count`. Preserve this source format when changing inventory behavior.
-- `build-data.js` downloads complete card records for all sets in the TCGdex catalog, independent of inventory contents. Run `node build-data.js` after changing builder behavior.
+- `build-data.js` refreshes all set metadata and downloads missing card records, reusing records already in the local cache. Run `node build-data.js` after changing builder behavior.
 - Omit TCGdex pricing from generated and checked-in card records; prefer HTTP compression over introducing a custom database format for the static browser app.
 - The generated database includes ordered set and card IDs; preserve the set catalog's API order and each set's returned card order. The gallery relies on these for default sorting.
-- `SET_ID_MAPPINGS` in `build-data.js` maps inventory set IDs to TCGdex set IDs. Keep aliases available in the generated card cache; currently `base6` maps to `lc`.
+- `SET_ID_MAPPINGS` in `build-data.js` maps inventory set IDs to TCGdex set IDs. Keep aliases available in the generated card cache; currently `base6` maps to `lc` and `mcd10p` maps to `2021swsh`.
 - Normalize numeric card-ID padding consistently when matching inventory entries to TCGdex records.
 - `build-data-errors.log` is replaced on each build and contains readable, multi-line errors from only the latest run. Failed set/card fetches are logged and skipped so the rest of the cache can be generated; fatal input/build errors should still exit unsuccessfully.
 
