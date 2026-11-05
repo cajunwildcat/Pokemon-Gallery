@@ -9,7 +9,8 @@
 ## Inventory and cache
 
 - `data.json` entries use `cardId`, `variantId`, and `count`. Preserve this source format when changing inventory behavior.
-- `build-data.js` downloads complete card records for the sets represented in the inventory and the set catalog used by default sorting. Run `node build-data.js` after changing inventory or builder behavior.
+- `build-data.js` downloads complete card records for all sets in the TCGdex catalog, independent of inventory contents. Run `node build-data.js` after changing builder behavior.
+- Omit TCGdex pricing from generated and checked-in card records; prefer HTTP compression over introducing a custom database format for the static browser app.
 - The generated database includes ordered set and card IDs; preserve the set catalog's API order and each set's returned card order. The gallery relies on these for default sorting.
 - `SET_ID_MAPPINGS` in `build-data.js` maps inventory set IDs to TCGdex set IDs. Keep aliases available in the generated card cache; currently `base6` maps to `lc`.
 - Normalize numeric card-ID padding consistently when matching inventory entries to TCGdex records.
@@ -20,6 +21,8 @@
 - Group inventory entries with the same normalized card ID into one collection card. Sum total quantity and retain each variant's quantity for filters and the details dialog.
 - Search should match card/set metadata and illustrator names. Keep set, type, rarity, variant, illustrator, and sort controls working together.
 - The default sort follows TCGdex set catalog order and card order. Other sorts include name, rarity, collection count, and original inventory order ("Date added").
+- Keep the My Collection, Master Sets, and Pokédex tabs consistent with the shared local card database; Master Sets and Pokédex highlight owned cards and gray out unowned art.
+- Build Pokédex entries from Pokémon card `dexId` values, deduplicating card records and grouping multi-Pokémon cards under each associated number. Strip card-form suffixes/prefixes from displayed species names.
 - Card details include all owned variants and their counts. Preserve dialog dismissal by close button, backdrop, and Escape; clicking detail art opens the enlarged art dialog.
 - Keep the controls on one horizontal row; allow horizontal scrolling on narrow screens.
 

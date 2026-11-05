@@ -6,8 +6,7 @@ const CONCURRENCY = 5;
 const SET_ID_MAPPINGS = {
     base6: "lc"
 };
-const [inputArg = "data.json", outputArg = "tcgdex-database.json"] = process.argv.slice(2);
-const inputPath = path.resolve(inputArg);
+const [outputArg = "tcgdex-database.json"] = process.argv.slice(2);
 const outputPath = path.resolve(outputArg);
 const errorLogPath = path.join(path.dirname(outputPath), "build-data-errors.log");
 const errors = [];
@@ -42,16 +41,6 @@ function normalizeCardId(cardId) {
     return cardId.replace(/^(.*-)(\d+)$/, (_, prefix, number) => (
         `${prefix}${number.replace(/^0+(?=\d)/, "")}`
     ));
-}
-
-function setIdFromCardId(cardId) {
-    const separator = cardId.lastIndexOf("-");
-    if (separator <= 0) throw new Error(`Invalid card ID: ${cardId}`);
-    return cardId.slice(0, separator);
-}
-
-function canonicalSetId(setId) {
-    return SET_ID_MAPPINGS[setId] || setId;
 }
 
 async function fetchJson(url) {
@@ -99,12 +88,7 @@ async function main() {
         await fs.mkdir(path.dirname(errorLogPath), { recursive: true });
         await fs.writeFile(errorLogPath, "", "utf8");
 
-        const inventory = JSON.parse(await fs.readFile(inputPath, "utf8"));
-        if (!Array.isArray(inventory.cards)) {
-            throw new Error(`${inputPath} must contain a cards array.`);
-        }
-
-        let availableSets = [];
+        let availableSets;
         try {
             availableSets = await fetchJson(`${API_ROOT}/sets`);
             if (!Array.isArray(availableSets)) {
@@ -112,27 +96,18 @@ async function main() {
             }
         } catch (error) {
             logError(errorMessage(error), { stage: "set-catalog", url: `${API_ROOT}/sets` });
+            process.exitCode = 1;
+            return;
         }
 
-        const sourceSetIdsByCanonicalId = new Map();
-        for (const [index, card] of inventory.cards.entries()) {
-            try {
-                const sourceSetId = setIdFromCardId(card.cardId);
-                const canonicalId = canonicalSetId(sourceSetId);
-                if (!sourceSetIdsByCanonicalId.has(canonicalId)) {
-                    sourceSetIdsByCanonicalId.set(canonicalId, new Set());
-                }
-                sourceSetIdsByCanonicalId.get(canonicalId).add(sourceSetId);
-            } catch (error) {
-                logError(errorMessage(error), {
-                    stage: "inventory",
-                    cardId: card?.cardId,
-                    inventoryIndex: index
-                });
+        const orderedSetIds = availableSets.map(set => set.id);
+        const aliasesByCanonicalId = new Map();
+        for (const [sourceSetId, canonicalId] of Object.entries(SET_ID_MAPPINGS)) {
+            if (!aliasesByCanonicalId.has(canonicalId)) {
+                aliasesByCanonicalId.set(canonicalId, new Set());
             }
+            aliasesByCanonicalId.get(canonicalId).add(sourceSetId);
         }
-
-        const orderedSetIds = [...sourceSetIdsByCanonicalId.keys()].sort();
         const sets = {};
         const cards = {};
         let downloadedCardCount = 0;
@@ -178,7 +153,7 @@ async function main() {
             });
 
             const cardIds = [];
-            const sourceSetIds = sourceSetIdsByCanonicalId.get(setId);
+            const sourceSetIds = aliasesByCanonicalId.get(setId) || new Set();
             for (const card of cardDetails.filter(Boolean)) {
                 if (typeof card.id !== "string" || !card.id) {
                     logError("TCGdex returned card details without an ID.", {
@@ -197,7 +172,9 @@ async function main() {
                     });
                     continue;
                 }
-                cards[normalizedId] = card;
+                const cardData = { ...card };
+                delete cardData.pricing;
+                cards[normalizedId] = cardData;
                 cardIds.push(normalizedId);
                 for (const sourceSetId of sourceSetIds) {
                     const sourceCardId = normalizeCardId(`${sourceSetId}-${card.localId}`);
@@ -211,7 +188,7 @@ async function main() {
                         });
                         continue;
                     }
-                    cards[sourceCardId] = card;
+                    cards[sourceCardId] = cardData;
                 }
                 downloadedCardCount += 1;
             }

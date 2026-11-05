@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#111a24">
     <title>Pokémon Gallery</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20261105">
 </head>
 <body>
     <header>
@@ -20,49 +20,97 @@
     </header>
 
     <main class="shell">
-        <section class="toolbar" aria-label="Search and filter cards">
-            <div class="field search-field">
-                <label for="search">Search collection</label>
-                <input id="search" type="search" placeholder="Name, card number, set..." autocomplete="off">
+        <nav class="view-tabs" role="tablist" aria-label="Gallery views">
+            <button id="collection-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="collection-panel">My Collection</button>
+            <button id="master-sets-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="master-sets-panel" tabindex="-1">Master Sets</button>
+            <button id="pokedex-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="pokedex-panel" tabindex="-1">Pokédex</button>
+        </nav>
+
+        <section id="collection-panel" class="view-panel" role="tabpanel" aria-labelledby="collection-tab">
+            <section class="toolbar" aria-label="Search and filter cards">
+                <div class="field search-field">
+                    <label for="search">Search collection</label>
+                    <div class="search-control">
+                        <input id="search" type="search" placeholder="Name, card number, set..." autocomplete="off">
+                        <button class="clear-search" id="clear-search" type="button" aria-label="Clear collection search" hidden>×</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="set-filter">Set</label>
+                    <select id="set-filter"><option value="">All sets</option></select>
+                </div>
+                <div class="field">
+                    <label for="type-filter">Type</label>
+                    <select id="type-filter"><option value="">All types</option></select>
+                </div>
+                <div class="field">
+                    <label for="rarity-filter">Rarity</label>
+                    <select id="rarity-filter"><option value="">All rarities</option></select>
+                </div>
+                <div class="field">
+                    <label for="variant-filter">Variant</label>
+                    <select id="variant-filter"><option value="">All variants</option></select>
+                </div>
+                <div class="field">
+                    <label for="illustrator-filter">Illustrator</label>
+                    <select id="illustrator-filter"><option value="">All illustrators</option></select>
+                </div>
+                <div class="field">
+                    <label for="sort-order">Sort by</label>
+                    <select id="sort-order">
+                        <option value="set">Set and card number</option>
+                        <option value="pokedex">Pokédex number</option>
+                        <option value="name">Name</option>
+                        <option value="rarity">Rarity</option>
+                        <option value="count">Collection count</option>
+                        <option value="added">Date added (original order)</option>
+                    </select>
+                </div>
+                <button class="reset-button" id="reset-filters" type="button">Reset</button>
+            </section>
+
+            <div class="results-line">
+                <span id="results-count" aria-live="polite">Loading your cards…</span>
+                <span id="status" role="status"></span>
             </div>
-            <div class="field">
-                <label for="set-filter">Set</label>
-                <select id="set-filter"><option value="">All sets</option></select>
-            </div>
-            <div class="field">
-                <label for="type-filter">Type</label>
-                <select id="type-filter"><option value="">All types</option></select>
-            </div>
-            <div class="field">
-                <label for="rarity-filter">Rarity</label>
-                <select id="rarity-filter"><option value="">All rarities</option></select>
-            </div>
-            <div class="field">
-                <label for="variant-filter">Variant</label>
-                <select id="variant-filter"><option value="">All variants</option></select>
-            </div>
-            <div class="field">
-                <label for="illustrator-filter">Illustrator</label>
-                <select id="illustrator-filter"><option value="">All illustrators</option></select>
-            </div>
-            <div class="field">
-                <label for="sort-order">Sort by</label>
-                <select id="sort-order">
-                    <option value="set">Set and card number</option>
-                    <option value="name">Name</option>
-                    <option value="rarity">Rarity</option>
-                    <option value="count">Collection count</option>
-                    <option value="added">Date added (original order)</option>
-                </select>
-            </div>
-            <button class="reset-button" id="reset-filters" type="button">Reset</button>
+            <section id="card-grid" class="card-grid" aria-label="Your Pokémon cards"></section>
         </section>
 
-        <div class="results-line">
-            <span id="results-count" aria-live="polite">Loading your cards…</span>
-            <span id="status" role="status"></span>
-        </div>
-        <section id="card-grid" class="card-grid" aria-label="Your Pokémon cards"></section>
+        <section id="master-sets-panel" class="view-panel" role="tabpanel" aria-labelledby="master-sets-tab" hidden>
+            <div class="view-heading">
+                <div>
+                    <h2>Master Sets</h2>
+                    <p>Browse every card in the TCGdex catalog. Cards in your collection are shown in color.</p>
+                </div>
+                <span id="master-set-count" class="view-count"></span>
+            </div>
+            <div class="pokedex-search field">
+                <label for="master-set-search">Search sets and cards</label>
+                <div class="search-control">
+                    <input id="master-set-search" type="search" placeholder="Set, card, or Pokémon + card number..." autocomplete="off">
+                    <button class="clear-search" id="clear-master-set-search" type="button" aria-label="Clear Master Sets search" hidden>×</button>
+                </div>
+            </div>
+            <div id="master-set-list" class="master-set-list"></div>
+        </section>
+
+        <section id="pokedex-panel" class="view-panel" role="tabpanel" aria-labelledby="pokedex-tab" hidden>
+            <div class="view-heading">
+                <div>
+                    <h2>Pokédex</h2>
+                    <p>Pokémon are ordered by National Pokédex number. Choose which owned card to feature.</p>
+                </div>
+                <span id="pokedex-count" class="view-count"></span>
+            </div>
+            <div class="pokedex-search field">
+                <label for="pokedex-search">Search Pokémon</label>
+                <div class="search-control">
+                    <input id="pokedex-search" type="search" placeholder="Name or Pokédex number..." autocomplete="off">
+                    <button class="clear-search" id="clear-pokedex-search" type="button" aria-label="Clear Pokédex search" hidden>×</button>
+                </div>
+            </div>
+            <section id="pokedex-grid" class="card-grid pokedex-grid" aria-label="Pokédex entries"></section>
+        </section>
         <p class="source-note">Card information and images from <a href="https://tcgdex.dev/" target="_blank" rel="noreferrer">TCGdex</a>.</p>
     </main>
 

@@ -29,7 +29,7 @@
         .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
 
         header {
-            padding: 46px 0 30px;
+            padding: 10px 0 30px;
             border-bottom: 1px solid var(--border);
             background: linear-gradient(135deg, #1d2b39, #111a24 70%);
         }
@@ -66,6 +66,45 @@
 
         main { padding: 28px 0 60px; }
 
+        .view-tabs {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            margin-bottom: 22px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .view-tab {
+            flex: 0 0 auto;
+            padding: 10px 15px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .view-tab[aria-selected="true"] {
+            border-bottom-color: var(--accent);
+            color: var(--accent-strong);
+        }
+
+        .view-tab:focus-visible { outline-offset: -2px; }
+        .view-panel[hidden] { display: none; }
+
+        .view-heading {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: end;
+            margin: 0 0 20px;
+        }
+
+        .view-heading h2 { margin: 0; font-size: 1.5rem; }
+        .view-heading p { margin: 5px 0 0; color: var(--muted); }
+        .view-count { flex: 0 0 auto; color: var(--muted); font-size: .85rem; }
+
         .toolbar {
             display: flex;
             gap: 10px;
@@ -98,6 +137,35 @@
             background: var(--surface);
             color: var(--text);
         }
+
+        .search-control { position: relative; width: 100%; }
+
+        .search-control > input[type="search"] { padding-right: 42px; }
+
+        .search-control > input[type="search"]::-webkit-search-cancel-button { display: none; }
+
+        .search-control > .clear-search {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            display: grid;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            transform: translateY(-50%);
+            place-items: center;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 1.25rem;
+            line-height: 1;
+            appearance: none;
+        }
+
+        .search-control > .clear-search:hover { background: var(--surface-raised); color: var(--text); }
+        .search-control > .clear-search[hidden] { display: none; }
 
         .field input:focus, .field select:focus, button:focus-visible {
             border-color: var(--accent);
@@ -191,6 +259,7 @@
         }
 
         .variant-row .tag { border-style: dashed; }
+        .card.unowned .card-image { filter: grayscale(1); opacity: .58; }
 
         .card-bottom {
             display: flex;
@@ -209,6 +278,101 @@
             color: var(--accent-strong);
             font-weight: 700;
         }
+
+        .unowned-count {
+            color: var(--muted);
+            font-size: .72rem;
+        }
+
+        .master-set-list { display: grid; gap: 10px; }
+
+        .master-set {
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+        }
+
+        .master-set summary {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            cursor: pointer;
+            list-style: none;
+        }
+
+        .master-set summary::-webkit-details-marker { display: none; }
+        .master-set summary::marker { content: ""; }
+        .master-set summary::after {
+            margin-left: 12px;
+            color: var(--muted);
+            content: "▾";
+            transition: transform .18s ease;
+        }
+
+        .master-set[open] summary::after { transform: rotate(180deg); }
+        .master-set summary:hover { background: var(--surface-raised); }
+        .master-set-summary { display: flex; flex: 1; align-items: center; gap: 16px; min-width: 0; }
+        .master-set-logo {
+            flex: 0 0 108px;
+            width: 108px;
+            height: 56px;
+            object-fit: contain;
+        }
+
+        .master-set-overview { display: grid; flex: 1; min-width: 0; gap: 7px; }
+        .master-set-name { font-weight: 700; }
+        .master-set-progress-row { display: flex; align-items: center; gap: 12px; }
+        .master-set-progress {
+            display: block;
+            flex: 1;
+            height: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: var(--page);
+        }
+
+        .master-set-progress > span {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--accent);
+        }
+
+        .master-set-summary-meta {
+            flex: 0 0 auto;
+            color: var(--muted);
+            font-size: .8rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 500;
+        }
+
+        .master-set-content { padding: 0 14px 14px; }
+        .master-set .card-grid { grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; }
+        .master-set .card-info { padding: 10px; }
+
+        .pokedex-search {
+            width: min(420px, 100%);
+            margin-bottom: 18px;
+        }
+
+        .pokedex-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+
+        .pokemon-card .card-info { display: grid; gap: 7px; }
+        .pokemon-card .card-bottom { margin-top: 0; }
+        .pokemon-card .card-number { color: var(--accent); font-variant-numeric: tabular-nums; }
+        .featured-card-select {
+            width: 100%;
+            min-width: 0;
+            min-height: 36px;
+            padding: 6px 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-raised);
+            color: var(--text);
+        }
+
+        .featured-card-label { color: var(--muted); font-size: .73rem; }
 
         .empty-state {
             grid-column: 1 / -1;
@@ -302,6 +466,11 @@
             .card-info { padding: 10px; }
             .detail-layout { grid-template-columns: 1fr; }
             .detail-image { width: min(230px, 75%); margin: 0 auto; }
+            .master-set summary { padding: 10px 12px; }
+            .master-set-summary { gap: 10px; }
+            .master-set-logo { flex-basis: 76px; width: 76px; height: 48px; }
+            .master-set-progress-row { align-items: start; flex-direction: column; gap: 5px; }
+            .master-set-progress { width: 100%; flex: 0 0 7px; }
         }
 
         @media (prefers-reduced-motion: reduce) {
