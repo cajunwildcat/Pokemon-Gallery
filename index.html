@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#111a24">
+    <title>Pokémon Gallery</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="shell">
+            <h1>Pokémon Gallery</h1>
+            <div class="collection-summary" aria-label="Collection summary">
+                <div class="summary-item"><strong id="unique-count">—</strong><span>unique cards</span></div>
+                <div class="summary-item"><strong id="total-count">—</strong><span>cards owned</span></div>
+                <div class="summary-item"><strong id="set-count">—</strong><span>sets represented</span></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="shell">
+        <section class="toolbar" aria-label="Search and filter cards">
+            <div class="field search-field">
+                <label for="search">Search collection</label>
+                <input id="search" type="search" placeholder="Name, card number, set..." autocomplete="off">
+            </div>
+            <div class="field">
+                <label for="set-filter">Set</label>
+                <select id="set-filter"><option value="">All sets</option></select>
+            </div>
+            <div class="field">
+                <label for="type-filter">Type</label>
+                <select id="type-filter"><option value="">All types</option></select>
+            </div>
+            <div class="field">
+                <label for="rarity-filter">Rarity</label>
+                <select id="rarity-filter"><option value="">All rarities</option></select>
+            </div>
+            <div class="field">
+                <label for="variant-filter">Variant</label>
+                <select id="variant-filter"><option value="">All variants</option></select>
+            </div>
+            <div class="field">
+                <label for="illustrator-filter">Illustrator</label>
+                <select id="illustrator-filter"><option value="">All illustrators</option></select>
+            </div>
+            <div class="field">
+                <label for="sort-order">Sort by</label>
+                <select id="sort-order">
+                    <option value="set">Set and card number</option>
+                    <option value="name">Name</option>
+                    <option value="rarity">Rarity</option>
+                    <option value="count">Collection count</option>
+                    <option value="added">Date added (original order)</option>
+                </select>
+            </div>
+            <button class="reset-button" id="reset-filters" type="button">Reset</button>
+        </section>
+
+        <div class="results-line">
+            <span id="results-count" aria-live="polite">Loading your cards…</span>
+            <span id="status" role="status"></span>
+        </div>
+        <section id="card-grid" class="card-grid" aria-label="Your Pokémon cards"></section>
+        <p class="source-note">Card information and images from <a href="https://tcgdex.dev/" target="_blank" rel="noreferrer">TCGdex</a>.</p>
+    </main>
+
+    <dialog id="card-dialog" aria-labelledby="dialog-title">
+        <div id="dialog-content" class="dialog-content"></div>
+    </dialog>
+
+    <dialog id="art-dialog" class="art-dialog" aria-label="Enlarged Pokémon card art">
+        <div class="art-dialog-content">
+            <button class="close-button art-close-button" type="button" aria-label="Close enlarged card art">✕</button>
+            <img class="enlarged-image" alt="">
+        </div>
+    </dialog>
+
+    <script src="app.js" defer></script>
+</body>
+</html>
