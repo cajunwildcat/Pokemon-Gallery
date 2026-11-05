@@ -2,6 +2,8 @@
 
 The gallery reads your collection from `data.json` and card details from the generated `tcgdex-database.json`.
 
+The imported collection data is expected in the export format provided by the Android app [TCG Hub](https://play.google.com/store/apps/details?id=com.jacobgreenland.tcghub_pokemon&hl=en_US). Place its exported JSON file in the project as `data.json`.
+
 When you change the collection, refresh the local database with:
 
 ```sh
