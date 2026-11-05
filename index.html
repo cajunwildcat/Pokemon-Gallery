@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#111a24">
     <title>Pokémon Gallery</title>
-    <link rel="stylesheet" href="styles.css?v=20261105">
+    <link rel="stylesheet" href="styles.css?v=20261105-binder">
 </head>
 <body>
     <header>
@@ -22,8 +22,9 @@
     <main class="shell">
         <nav class="view-tabs" role="tablist" aria-label="Gallery views">
             <button id="collection-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="collection-panel">My Collection</button>
-            <button id="master-sets-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="master-sets-panel" tabindex="-1">Master Sets</button>
             <button id="pokedex-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="pokedex-panel" tabindex="-1">Pokédex</button>
+            <button id="binder-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="binder-panel" tabindex="-1">Binder</button>
+            <button id="master-sets-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="master-sets-panel" tabindex="-1">Master Sets</button>
         </nav>
 
         <section id="collection-panel" class="view-panel" role="tabpanel" aria-labelledby="collection-tab">
@@ -121,6 +122,40 @@
             </div>
             <section id="pokedex-grid" class="card-grid pokedex-grid" aria-label="Pokédex entries"></section>
         </section>
+        <section id="binder-panel" class="view-panel" role="tabpanel" aria-labelledby="binder-tab" hidden>
+            <div class="view-heading">
+                <div>
+                    <h2>Binder</h2>
+                    <p>Create custom pages, fill pockets from your collection, and plan cards you want to collect.</p>
+                </div>
+            </div>
+            <div class="binder-page-controls">
+                <div class="field">
+                    <label for="binder-rows">Page height</label>
+                    <select id="binder-rows">
+                        <option value="2">2 rows</option>
+                        <option value="3" selected>3 rows</option>
+                        <option value="4">4 rows</option>
+                        <option value="5">5 rows</option>
+                        <option value="6">6 rows</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="binder-columns">Page width</label>
+                    <select id="binder-columns">
+                        <option value="2">2 columns</option>
+                        <option value="3" selected>3 columns</option>
+                        <option value="4">4 columns</option>
+                        <option value="5">5 columns</option>
+                        <option value="6">6 columns</option>
+                    </select>
+                </div>
+                <button id="add-binder-page" class="reset-button" type="button">Add page</button>
+                <button id="remove-binder-page" class="reset-button binder-remove-page" type="button" disabled>Remove current page</button>
+            </div>
+            <nav id="binder-page-tabs" class="binder-page-tabs" aria-label="Binder pages"></nav>
+            <div id="binder-content"></div>
+        </section>
         <p class="source-note">Card information and images from <a href="https://tcgdex.dev/" target="_blank" rel="noreferrer">TCGdex</a>.</p>
     </main>
 
@@ -132,6 +167,30 @@
         <div class="art-dialog-content">
             <button class="close-button art-close-button" type="button" aria-label="Close enlarged card art">✕</button>
             <img class="enlarged-image" alt="">
+        </div>
+    </dialog>
+
+    <dialog id="binder-picker-dialog" class="binder-picker-dialog" aria-labelledby="binder-picker-title">
+        <div class="binder-picker-content">
+            <div class="dialog-heading">
+                <div>
+                    <h2 id="binder-picker-title">Choose a card</h2>
+                    <p class="dialog-subtitle">Select a card for this binder pocket.</p>
+                </div>
+                <button id="close-binder-picker" class="close-button" type="button" aria-label="Close card picker">✕</button>
+            </div>
+            <div class="binder-picker-controls">
+                <div class="field">
+                    <label for="binder-card-search">Search cards</label>
+                    <input id="binder-card-search" type="search" placeholder="Name, set, or card number..." autocomplete="off">
+                </div>
+                <label class="planning-mode-toggle">
+                    <input id="binder-planning-mode" type="checkbox">
+                    <span>Planning mode <small>Include cards not in my collection</small></span>
+                </label>
+            </div>
+            <button id="clear-binder-pocket" class="reset-button binder-clear-pocket" type="button">Remove card from pocket</button>
+            <div id="binder-picker-results" class="binder-picker-results"></div>
         </div>
     </dialog>
 

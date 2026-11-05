@@ -16,12 +16,18 @@
         const pokedexSearch = document.getElementById("pokedex-search");
         const masterSetSearch = document.getElementById("master-set-search");
         const masterSetSort = document.getElementById("master-set-sort");
+        const binderPages = [];
+        let activeBinderPageId = null;
+        let binderPickerTarget = null;
+        let binderStorageError = "";
+        let lastBinderDropAt = 0;
         const tabs = [...document.querySelectorAll(".view-tab")];
         let collection = [];
         let databaseSets = {};
         let setOrder = new Map();
         let availableSets = [];
         let allCardsById = new Map();
+        let catalogCards = [];
         let ownedCardsByApiId = new Map();
         let pokedexEntries = [];
         const speciesDexIds = new Map();
@@ -461,6 +467,8 @@
                 const renderPokemonCard = selectedCard => {
                     const cardElement = renderCard(selectedCard, {
                         unowned: !owned,
+                        hideHp: true,
+                        hideVariants: true,
                         preserveImageAlt: !owned,
                         onImageUnavailable: !owned ? failedCard => {
                             failedPokedexImageCards.add(cardGroupId(failedCard));
@@ -519,6 +527,268 @@
             document.getElementById("pokedex-count").textContent = `${entries.length} of ${pokedexEntries.length} Pokémon`;
         }
 
+        function restoreBinderPages() {
+            try {
+                const stored = localStorage.getItem("pokemon-gallery-binder");
+                if (!stored) return;
+                const state = JSON.parse(stored);
+                if (!state || !Array.isArray(state.pages)) {
+                    throw new Error("Saved binder data is not in the expected format.");
+                }
+                for (const page of state.pages) {
+                    if (!Number.isInteger(page.rows) || page.rows < 2 || page.rows > 6
+                        || !Number.isInteger(page.columns) || page.columns < 2 || page.columns > 6
+                        || !Array.isArray(page.slots) || page.slots.length !== page.rows * page.columns) {
+                        throw new Error("A saved binder page has invalid dimensions or pockets.");
+                    }
+                    binderPages.push({
+                        id: String(page.id),
+                        rows: page.rows,
+                        columns: page.columns,
+                        slots: page.slots.map(slot => {
+                            if (slot === null) return null;
+                            if (!slot || typeof slot.cardId !== "string") {
+                                throw new Error("A saved binder pocket has invalid card data.");
+                            }
+                            return { cardId: normalizeCardId(slot.cardId), planned: Boolean(slot.planned) };
+                        })
+                    });
+                }
+                activeBinderPageId = binderPages.some(page => page.id === state.activePageId)
+                    ? state.activePageId
+                    : binderPages[0]?.id || null;
+            } catch (error) {
+                binderStorageError = `Could not restore binder: ${error.message}`;
+            }
+        }
+
+        function saveBinderPages() {
+            try {
+                localStorage.setItem("pokemon-gallery-binder", JSON.stringify({
+                    pages: binderPages,
+                    activePageId: activeBinderPageId
+                }));
+                binderStorageError = "";
+            } catch (error) {
+                binderStorageError = `Could not save binder changes: ${error.message}`;
+            }
+        }
+
+        function binderCardForId(cardId) {
+            const details = allCardsById.get(normalizeCardId(cardId));
+            if (!details) return null;
+            return cardFromDetails(details, ownedCardsByApiId.get(normalizeCardId(details.id)));
+        }
+
+        function renderBinder() {
+            const pageTabs = document.getElementById("binder-page-tabs");
+            const content = document.getElementById("binder-content");
+            const removePageButton = document.getElementById("remove-binder-page");
+            pageTabs.replaceChildren();
+            content.replaceChildren();
+            removePageButton.disabled = !binderPages.length;
+            if (binderStorageError) {
+                const error = document.createElement("p");
+                error.className = "binder-storage-error";
+                error.setAttribute("role", "alert");
+                error.textContent = binderStorageError;
+                content.append(error);
+            }
+
+            if (!binderPages.length) {
+                const empty = document.createElement("div");
+                empty.className = "empty-state binder-empty";
+                empty.innerHTML = "<strong>Your binder is empty</strong>Choose a page size above and add your first page.";
+                content.append(empty);
+                return;
+            }
+
+            for (const [index, page] of binderPages.entries()) {
+                const tab = document.createElement("button");
+                tab.className = "binder-page-tab";
+                tab.type = "button";
+                tab.textContent = `Page ${index + 1} · ${page.columns} × ${page.rows}`;
+                tab.setAttribute("aria-pressed", String(page.id === activeBinderPageId));
+                tab.addEventListener("click", () => {
+                    activeBinderPageId = page.id;
+                    saveBinderPages();
+                    renderBinder();
+                });
+                pageTabs.append(tab);
+            }
+
+            const page = binderPages.find(item => item.id === activeBinderPageId);
+            if (!page) return;
+            const grid = document.createElement("div");
+            grid.className = "binder-grid";
+            grid.style.gridTemplateColumns = `repeat(${page.columns}, var(--binder-pocket-width))`;
+            grid.style.setProperty("--binder-columns", page.columns);
+            grid.style.setProperty("--binder-pocket-width", `${90 + page.columns * 10}px`);
+            grid.setAttribute("aria-label", `Binder page with ${page.columns} columns and ${page.rows} rows`);
+            const pageScroll = document.createElement("div");
+            pageScroll.className = "binder-page-scroll";
+
+            page.slots.forEach((slot, index) => {
+                const pocket = document.createElement("button");
+                pocket.className = "binder-pocket";
+                pocket.type = "button";
+                pocket.draggable = Boolean(slot);
+                pocket.dataset.slotIndex = String(index);
+                const card = slot && binderCardForId(slot.cardId);
+                if (card) {
+                    pocket.classList.add("binder-pocket-filled");
+                    const planned = slot.planned && !ownedCardsByApiId.has(normalizeCardId(slot.cardId));
+                    const image = document.createElement("img");
+                    image.className = "binder-card-image";
+                    image.src = imageUrl(card) || missingImageUrl;
+                    image.alt = "";
+                    image.draggable = false;
+                    image.addEventListener("error", () => handleCardImageError(image, card));
+                    pocket.append(image);
+                    if (planned) {
+                        const indicator = document.createElement("span");
+                        indicator.className = "binder-planned-indicator";
+                        indicator.textContent = "Planned";
+                        pocket.append(indicator);
+                    }
+                    pocket.setAttribute("aria-label", `${cardName(card)} · ${setName(card)} · pocket ${index + 1}${planned ? " · planned" : ""}. Click to change.`);
+                } else {
+                    pocket.classList.add("binder-pocket-empty");
+                    pocket.innerHTML = '<span class="binder-pocket-plus" aria-hidden="true">+</span><span>Choose a card</span>';
+                    pocket.setAttribute("aria-label", `Empty binder pocket ${index + 1}. Click to choose a card.`);
+                }
+
+                pocket.addEventListener("click", () => {
+                    if (Date.now() - lastBinderDropAt < 400) return;
+                    openBinderPicker(page.id, index);
+                });
+                pocket.addEventListener("dragstart", event => {
+                    event.dataTransfer.setData("text/plain", String(index));
+                    event.dataTransfer.effectAllowed = "move";
+                    pocket.classList.add("binder-pocket-dragging");
+                });
+                pocket.addEventListener("dragend", () => pocket.classList.remove("binder-pocket-dragging"));
+                pocket.addEventListener("dragover", event => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                });
+                pocket.addEventListener("drop", event => {
+                    event.preventDefault();
+                    const sourceIndex = Number(event.dataTransfer.getData("text/plain"));
+                    const targetIndex = index;
+                    if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= page.slots.length
+                        || sourceIndex === targetIndex || !page.slots[sourceIndex]) return;
+                    lastBinderDropAt = Date.now();
+                    [page.slots[sourceIndex], page.slots[targetIndex]] = [page.slots[targetIndex], page.slots[sourceIndex]];
+                    saveBinderPages();
+                    renderBinder();
+                });
+                grid.append(pocket);
+            });
+            pageScroll.append(grid);
+            content.append(pageScroll);
+        }
+
+        function openBinderPicker(pageId, slotIndex) {
+            binderPickerTarget = { pageId, slotIndex };
+            const targetPage = binderPages.find(page => page.id === pageId);
+            const currentSlot = targetPage?.slots[slotIndex];
+            const search = document.getElementById("binder-card-search");
+            const planningMode = document.getElementById("binder-planning-mode");
+            search.value = "";
+            planningMode.checked = false;
+            document.getElementById("clear-binder-pocket").hidden = !currentSlot;
+            renderBinderPickerResults();
+            document.body.classList.add("dialog-open");
+            document.getElementById("binder-picker-dialog").showModal();
+            search.focus();
+        }
+
+        function renderBinderPickerResults() {
+            const results = document.getElementById("binder-picker-results");
+            const query = document.getElementById("binder-card-search").value.trim().toLocaleLowerCase();
+            const planningMode = document.getElementById("binder-planning-mode").checked;
+            const candidates = planningMode ? catalogCards : collection.filter(card => card.details);
+            const matches = candidates.filter(card => !query || cardMatchesSearch(card, query));
+            const filtered = planningMode ? matches.slice(0, 100) : matches;
+            results.replaceChildren();
+            if (!filtered.length) {
+                const empty = document.createElement("p");
+                empty.className = "empty-state";
+                empty.textContent = planningMode ? "No cards match this search." : "No cards in your collection match this search.";
+                results.append(empty);
+                return;
+            }
+
+            if (planningMode && matches.length > filtered.length) {
+                const note = document.createElement("p");
+                note.className = "binder-picker-results-note";
+                note.textContent = `Showing the first ${filtered.length} of ${matches.length} cards. Search to narrow the results.`;
+                results.append(note);
+            }
+            for (const card of filtered) {
+                const cardId = cardGroupId(card);
+                const owned = ownedCardsByApiId.has(cardId);
+                const choice = document.createElement("button");
+                choice.type = "button";
+                choice.className = "binder-picker-card";
+                const image = document.createElement("img");
+                image.src = imageUrl(card) || missingImageUrl;
+                image.alt = "";
+                image.addEventListener("error", () => handleCardImageError(image, card));
+                const label = document.createElement("span");
+                label.className = "binder-picker-card-label";
+                const name = document.createElement("strong");
+                name.textContent = cardName(card);
+                const meta = document.createElement("small");
+                meta.textContent = `${setName(card)} · ${card.details.localId || card.cardId}${owned ? " · In collection" : " · Planning"}`;
+                label.append(name, meta);
+                choice.append(image, label);
+                choice.addEventListener("click", () => {
+                    const page = binderPages.find(item => item.id === binderPickerTarget?.pageId);
+                    if (!page) return;
+                    page.slots[binderPickerTarget.slotIndex] = { cardId, planned: !owned };
+                    activeBinderPageId = page.id;
+                    saveBinderPages();
+                    document.getElementById("binder-picker-dialog").close();
+                    renderBinder();
+                });
+                results.append(choice);
+            }
+        }
+
+        function addBinderPage() {
+            const rows = Number(document.getElementById("binder-rows").value);
+            const columns = Number(document.getElementById("binder-columns").value);
+            const page = {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                rows,
+                columns,
+                slots: Array(rows * columns).fill(null)
+            };
+            binderPages.push(page);
+            activeBinderPageId = page.id;
+            saveBinderPages();
+            renderBinder();
+        }
+
+        function removeActiveBinderPage() {
+            const pageIndex = binderPages.findIndex(page => page.id === activeBinderPageId);
+            if (pageIndex < 0) return;
+            const page = binderPages[pageIndex];
+            const hasCards = page.slots.some(Boolean);
+            const message = hasCards
+                ? `Remove Page ${pageIndex + 1} and its ${page.slots.filter(Boolean).length} assigned cards?`
+                : `Remove Page ${pageIndex + 1}?`;
+            if (!window.confirm(message)) return;
+            binderPages.splice(pageIndex, 1);
+            activeBinderPageId = binderPages[Math.max(0, pageIndex - 1)]?.id
+                || binderPages[0]?.id
+                || null;
+            saveBinderPages();
+            renderBinder();
+        }
+
         function addFilterOptions(select, values, placeholder) {
             const sortedValues = [...values].filter(Boolean).sort((a, b) => a.localeCompare(b));
             select.replaceChildren(new Option(placeholder, ""));
@@ -539,7 +809,7 @@
             const detail = card.details || {};
             const tags = [...(detail.types || []), detail.rarity].filter(Boolean)
                 .map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
-            const variants = cardVariants(card).map(variant =>
+            const variants = options.hideVariants ? "" : cardVariants(card).map(variant =>
                 `<span class="tag">${escapeHtml(formatVariant(variant.variantId))}</span>`
             ).join("");
             const cardElement = document.createElement("article");
@@ -558,7 +828,7 @@
                     <div class="tag-row">${tags || '<span class="tag">Details unavailable</span>'}</div>
                     ${variants ? `<div class="tag-row variant-row" aria-label="Owned variants">${variants}</div>` : ""}
                     <div class="card-bottom">
-                        <span>${detail.hp ? `${escapeHtml(detail.hp)} HP` : ""}</span>
+                        ${options.hideHp ? "" : `<span>${detail.hp ? `${escapeHtml(detail.hp)} HP` : ""}</span>`}
                         ${options.unowned
                             ? '<span class="unowned-count">Not collected</span>'
                             : `<span class="owned-count">×${escapeHtml(card.count)}</span>`}
@@ -598,7 +868,7 @@
                 grid.append(empty);
                 return;
             }
-            for (const card of cards) grid.append(renderCard(card));
+            for (const card of cards) grid.append(renderCard(card, { hideHp: true }));
         }
 
         function detailSection(title, body) {
@@ -690,12 +960,19 @@
                 for (const cardDetails of Object.values(database.cards)) {
                     if (cardDetails?.id) uniqueCardDetails.set(normalizeCardId(cardDetails.id), cardDetails);
                 }
+                catalogCards = [...uniqueCardDetails.values()]
+                    .map(details => cardFromDetails(details, ownedCardsByApiId.get(normalizeCardId(details.id))))
+                    .sort((a, b) => setCatalogOrder(a) - setCatalogOrder(b)
+                        || setCardOrder(a) - setCardOrder(b)
+                        || compareText(cardName(a), cardName(b)));
                 pokedexEntries = buildPokedexEntries([...uniqueCardDetails.values()]);
+                restoreBinderPages();
                 document.getElementById("unique-count").textContent = collection.length;
                 document.getElementById("set-count").textContent = new Set(collection.map(setName)).size;
                 populateFilters();
                 renderCollection();
                 renderMasterSetList();
+                renderBinder();
                 if (document.getElementById("pokedex-tab").getAttribute("aria-selected") === "true") {
                     renderPokedex();
                 }
@@ -720,6 +997,32 @@
         );
         addSearchClearButton(pokedexSearch, document.getElementById("clear-pokedex-search"));
         addSearchClearButton(masterSetSearch, document.getElementById("clear-master-set-search"));
+        document.getElementById("add-binder-page").addEventListener("click", addBinderPage);
+        document.getElementById("remove-binder-page").addEventListener("click", removeActiveBinderPage);
+        document.getElementById("binder-card-search").addEventListener("input", renderBinderPickerResults);
+        document.getElementById("binder-planning-mode").addEventListener("change", renderBinderPickerResults);
+        document.getElementById("clear-binder-pocket").addEventListener("click", () => {
+            const page = binderPages.find(item => item.id === binderPickerTarget?.pageId);
+            if (!page) return;
+            page.slots[binderPickerTarget.slotIndex] = null;
+            saveBinderPages();
+            document.getElementById("binder-picker-dialog").close();
+            renderBinder();
+        });
+        const binderPickerDialog = document.getElementById("binder-picker-dialog");
+        document.getElementById("close-binder-picker").addEventListener("click", () => binderPickerDialog.close());
+        binderPickerDialog.addEventListener("close", () => {
+            if (!dialog.open) document.body.classList.remove("dialog-open");
+        });
+        binderPickerDialog.addEventListener("click", event => {
+            if (event.target !== binderPickerDialog) return;
+            const bounds = binderPickerDialog.getBoundingClientRect();
+            const clickedInside = event.clientX >= bounds.left
+                && event.clientX <= bounds.right
+                && event.clientY >= bounds.top
+                && event.clientY <= bounds.bottom;
+            if (!clickedInside) binderPickerDialog.close();
+        });
         searchInput.addEventListener("input", renderCollection);
         pokedexSearch.addEventListener("input", renderPokedex);
         masterSetSearch.addEventListener("input", debounce(renderMasterSetList, 250));
@@ -755,7 +1058,9 @@
                 && event.clientY <= bounds.bottom;
             if (!clickedInside) dialog.close();
         });
-        dialog.addEventListener("close", () => document.body.classList.remove("dialog-open"));
+        dialog.addEventListener("close", () => {
+            if (!binderPickerDialog.open) document.body.classList.remove("dialog-open");
+        });
         artDialog.querySelector(".art-close-button").addEventListener("click", () => artDialog.close());
         artDialog.addEventListener("click", event => {
             if (event.target !== artDialog) return;
@@ -785,6 +1090,7 @@
                 document.getElementById(tab.getAttribute("aria-controls")).hidden = !selected;
             }
             if (activeTab.id === "pokedex-tab" && !pokedexRendered) renderPokedex();
+            if (activeTab.id === "binder-tab") renderBinder();
         }
 
         loadCollection();
