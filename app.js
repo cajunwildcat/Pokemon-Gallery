@@ -255,6 +255,7 @@
                 else detailImage.alt = `${cardName(card)} card image unavailable`;
             }, { once: true });
             dialog.querySelector(".close-button").addEventListener("click", () => dialog.close());
+            document.body.classList.add("dialog-open");
             dialog.showModal();
         }
 
@@ -325,6 +326,7 @@
                 && event.clientY <= bounds.bottom;
             if (!clickedInside) dialog.close();
         });
+        dialog.addEventListener("close", () => document.body.classList.remove("dialog-open"));
         artDialog.querySelector(".art-close-button").addEventListener("click", () => artDialog.close());
         artDialog.addEventListener("click", event => {
             if (event.target !== artDialog) return;

@@ -21,6 +21,8 @@
             font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
+        body.dialog-open { overflow: hidden; }
+
         button, input, select { font: inherit; }
         button { color: inherit; }
 
