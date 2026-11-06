@@ -5,12 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#111a24">
     <title>Pokémon Gallery</title>
-    <link rel="stylesheet" href="styles.css?v=20261105-binder">
+    <link rel="stylesheet" href="styles.css?v=20261106-localhost-edit-mode">
 </head>
 <body>
     <header>
         <div class="shell">
-            <h1>Pokémon Gallery</h1>
+            <div class="app-header-row">
+                <h1>Pokémon Gallery</h1>
+                <div class="save-collection-control collection-edit-control">
+                    <span id="save-status" role="status">Saved</span>
+                    <button id="save-collection" class="reset-button" type="button" disabled>Save collection</button>
+                </div>
+            </div>
             <div class="collection-summary" aria-label="Collection summary">
                 <div class="summary-item"><strong id="unique-count">—</strong><span>unique cards</span></div>
                 <div class="summary-item"><strong id="total-count">—</strong><span>cards owned</span></div>
@@ -28,6 +34,12 @@
         </nav>
 
         <section id="collection-panel" class="view-panel" role="tabpanel" aria-labelledby="collection-tab">
+            <div class="collection-file-controls collection-edit-control">
+                <button id="import-collection" class="reset-button" type="button">Import collection</button>
+                <input id="collection-file-input" type="file" accept=".json,application/json" hidden>
+                <span>Import a TCG Hub export or a saved <code>collection.json</code>.</span>
+                <span id="collection-file-status" role="status"></span>
+            </div>
             <section class="toolbar" aria-label="Search and filter cards">
                 <div class="field search-field">
                     <label for="search">Search collection</label>
@@ -109,7 +121,7 @@
             <div class="view-heading">
                 <div>
                     <h2>Pokédex</h2>
-                    <p>Pokémon are ordered by National Pokédex number. Choose which owned card to feature.</p>
+                    <p id="pokedex-description">Pokémon are ordered by National Pokédex number. Choose which owned card to feature.</p>
                 </div>
                 <span id="pokedex-count" class="view-count"></span>
             </div>
@@ -126,10 +138,10 @@
             <div class="view-heading">
                 <div>
                     <h2>Binder</h2>
-                    <p>Create custom pages, fill pockets from your collection, and plan cards you want to collect.</p>
+                    <p id="binder-description">Create custom pages, fill pockets from your collection, and plan cards you want to collect.</p>
                 </div>
             </div>
-            <div class="binder-page-controls">
+            <div class="binder-page-controls collection-edit-control">
                 <div class="field">
                     <label for="binder-rows">Page height</label>
                     <select id="binder-rows">
@@ -189,11 +201,11 @@
                     <span>Planning mode <small>Include cards not in my collection</small></span>
                 </label>
             </div>
-            <button id="clear-binder-pocket" class="reset-button binder-clear-pocket" type="button">Remove card from pocket</button>
+            <button id="clear-binder-pocket" class="reset-button binder-clear-pocket collection-edit-control" type="button">Remove card from pocket</button>
             <div id="binder-picker-results" class="binder-picker-results"></div>
         </div>
     </dialog>
 
-    <script src="app.js" defer></script>
+    <script src="app.js?v=20261106-localhost-edit-mode" defer></script>
 </body>
 </html>

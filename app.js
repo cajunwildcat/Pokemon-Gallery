@@ -1,3 +1,17 @@
+        const SET_ID_MAPPINGS = {
+            base6: "lc",
+            mcd10p: "2021swsh"
+        };
+        const COLLECTION_STORAGE_KEY = "pokemon-gallery-collection-draft";
+        const LOCAL_EDIT_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+        const CAN_EDIT_COLLECTION = LOCAL_EDIT_HOSTS.has(location.hostname);
+        document.body.classList.toggle("local-edit-mode", CAN_EDIT_COLLECTION);
+        if (!CAN_EDIT_COLLECTION) {
+            document.getElementById("pokedex-description").textContent =
+                "Pokémon are ordered by National Pokédex number. Owned cards are highlighted.";
+            document.getElementById("binder-description").textContent =
+                "Browse the saved binder pages and their card layouts.";
+        }
         const grid = document.getElementById("card-grid");
         const searchInput = document.getElementById("search");
         const filterElements = {
@@ -21,6 +35,13 @@
         let binderPickerTarget = null;
         let binderStorageError = "";
         let lastBinderDropAt = 0;
+        let collectionData = { version: 1, cards: [], binder: { pages: [], activePageId: null }, featuredPokedexCards: {} };
+        let collectionDirty = false;
+        let initialLoadComplete = false;
+        let collectionNeedsRender = false;
+        let collectionDraftPersistTimeout = null;
+        let activeFloatingMenu = null;
+        let nextFloatingMenuId = 0;
         const tabs = [...document.querySelectorAll(".view-tab")];
         let collection = [];
         let databaseSets = {};
@@ -33,6 +54,7 @@
         const speciesDexIds = new Map();
         const failedPokedexImageCards = new Set();
         const featuredPokedexCards = new Map();
+        const pokedexEntriesByCardId = new Map();
         let pokedexRendered = false;
 
         function escapeHtml(value) {
@@ -47,6 +69,96 @@
 
         function normalizeCardId(cardId) {
             return cardId.replace(/^(.*-)(\d+)$/, (_, prefix, number) => `${prefix}${number.replace(/^0+(?=\d)/, "")}`);
+        }
+
+        function normalizeCollectionCardId(cardId) {
+            if (typeof cardId !== "string" || !cardId.trim()) {
+                throw new Error("Every collection card must have a non-empty cardId.");
+            }
+            const normalizedId = normalizeCardId(cardId.trim());
+            const separator = normalizedId.lastIndexOf("-");
+            if (separator < 1) return normalizedId;
+            const setId = normalizedId.slice(0, separator);
+            const mappedSetId = SET_ID_MAPPINGS[setId] || setId;
+            return normalizeCardId(`${mappedSetId}${normalizedId.slice(separator)}`);
+        }
+
+        function normalizeBinderState(binder) {
+            if (!binder || typeof binder !== "object" || !Array.isArray(binder.pages)) {
+                throw new Error("Binder data must include a pages array.");
+            }
+            const pages = binder.pages.map(page => {
+                if (!page || !Number.isInteger(page.rows) || page.rows < 2 || page.rows > 6
+                    || !Number.isInteger(page.columns) || page.columns < 2 || page.columns > 6
+                    || !Array.isArray(page.slots) || page.slots.length !== page.rows * page.columns) {
+                    throw new Error("A binder page has invalid dimensions or pockets.");
+                }
+                return {
+                    id: String(page.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+                    rows: page.rows,
+                    columns: page.columns,
+                    slots: page.slots.map(slot => {
+                        if (slot === null) return null;
+                        if (!slot || typeof slot.cardId !== "string") {
+                            throw new Error("A binder pocket has invalid card data.");
+                        }
+                        return {
+                            cardId: normalizeCollectionCardId(slot.cardId),
+                            planned: Boolean(slot.planned)
+                        };
+                    })
+                };
+            });
+            const activePageId = pages.some(page => page.id === binder.activePageId)
+                ? binder.activePageId
+                : pages[0]?.id || null;
+            return { pages, activePageId };
+        }
+
+        function normalizeCollectionDocument(document) {
+            if (!document || typeof document !== "object" || !Array.isArray(document.cards)) {
+                throw new Error("Collection JSON must contain a cards array.");
+            }
+            const cards = document.cards.map(card => {
+                if (!card || typeof card !== "object") {
+                    throw new Error("Collection cards must be JSON objects.");
+                }
+                const count = Number(card.count);
+                if (!Number.isInteger(count) || count < 1) {
+                    throw new Error(`Card ${card.cardId || "(unknown)"} must have a positive integer count.`);
+                }
+                return {
+                    cardId: normalizeCollectionCardId(card.cardId),
+                    variantId: typeof card.variantId === "string" && card.variantId.trim()
+                        ? card.variantId.trim()
+                        : "unlimited",
+                    count
+                };
+            });
+            const hasBinder = Object.prototype.hasOwnProperty.call(document, "binder");
+            const hasFeaturedCards = Object.prototype.hasOwnProperty.call(document, "featuredPokedexCards");
+            const featuredPokedexCards = {};
+            if (hasFeaturedCards) {
+                if (!document.featuredPokedexCards || typeof document.featuredPokedexCards !== "object"
+                    || Array.isArray(document.featuredPokedexCards)) {
+                    throw new Error("featuredPokedexCards must be a Pokémon-to-card-ID object.");
+                }
+                for (const [dexId, cardId] of Object.entries(document.featuredPokedexCards)) {
+                    if (!/^\d+$/.test(dexId) || Number(dexId) < 1) {
+                        throw new Error(`Pokédex entry ${dexId} is invalid.`);
+                    }
+                    if (typeof cardId !== "string") throw new Error(`Featured card for Pokédex #${dexId} is invalid.`);
+                    featuredPokedexCards[dexId] = normalizeCollectionCardId(cardId);
+                }
+            }
+            return {
+                version: 1,
+                cards,
+                binder: hasBinder ? normalizeBinderState(document.binder) : null,
+                featuredPokedexCards,
+                hasBinder,
+                hasFeaturedCards
+            };
         }
 
         function normalizePokemonName(name) {
@@ -176,6 +288,235 @@
             return card.variants || [{ variantId: card.variantId, count: card.count }];
         }
 
+        function availableCardVariants(card) {
+            const names = new Map([["unlimited", "Unlimited"]]);
+            const flags = card.details?.variants || {};
+            const mappings = {
+                firstEdition: "first",
+                holo: "holo",
+                reverse: "reverse",
+                wPromo: "promo"
+            };
+            for (const [source, variantId] of Object.entries(mappings)) {
+                if (flags[source]) names.set(variantId, formatVariant(variantId));
+            }
+            for (const variant of cardVariants(card)) {
+                if (variant.variantId) names.set(variant.variantId, formatVariant(variant.variantId));
+            }
+            return [...names.entries()];
+        }
+
+        function addCardToCollection(card, variantId) {
+            if (!CAN_EDIT_COLLECTION) return;
+            const cardId = normalizeCollectionCardId(card.details?.id || card.cardId);
+            const existing = collectionData.cards.find(entry =>
+                entry.cardId === cardId && entry.variantId === variantId
+            );
+            if (existing) existing.count += 1;
+            else collectionData.cards.push({ cardId, variantId, count: 1 });
+            let ownedCard = ownedCardsByApiId.get(cardId);
+            const isNewUniqueCard = !ownedCard;
+            if (ownedCard) {
+                ownedCard.count += 1;
+                const ownedVariant = ownedCard.variants.find(variant => variant.variantId === variantId);
+                if (ownedVariant) ownedVariant.count += 1;
+                else ownedCard.variants.push({ variantId, count: 1 });
+            } else {
+                ownedCard = groupInventoryCards(
+                    [{ cardId, variantId, count: 1 }],
+                    allCardsById
+                )[0];
+                ownedCard.inventoryOrder = collectionData.cards.length - 1;
+                collection.push(ownedCard);
+                ownedCardsByApiId.set(cardId, ownedCard);
+            }
+            refreshCollectionAfterCardAdd(cardId, ownedCard, isNewUniqueCard);
+            markCollectionDirty();
+            document.getElementById("collection-file-status").textContent =
+                `Added ${cardName(card)} (${formatVariant(variantId)}) to your collection.`;
+            document.getElementById("collection-file-status").className = "";
+        }
+
+        function setVariantQuantity(card, variantId, quantity) {
+            if (!CAN_EDIT_COLLECTION || !Number.isInteger(quantity) || quantity < 0) return;
+            const cardId = normalizeCollectionCardId(card.details?.id || card.cardId);
+            const existingEntries = collectionData.cards.filter(entry => entry.cardId === cardId);
+            const variantCounts = new Map();
+            for (const entry of existingEntries) {
+                variantCounts.set(entry.variantId, (variantCounts.get(entry.variantId) || 0) + entry.count);
+            }
+            if ((variantCounts.get(variantId) || 0) === quantity) return;
+            if (quantity > 0) variantCounts.set(variantId, quantity);
+            else variantCounts.delete(variantId);
+
+            const firstEntryIndex = collectionData.cards.findIndex(entry => entry.cardId === cardId);
+            const remainingEntries = collectionData.cards.filter(entry => entry.cardId !== cardId);
+            const updatedEntries = availableCardVariants(card)
+                .map(([availableVariantId]) => ({
+                    cardId,
+                    variantId: availableVariantId,
+                    count: variantCounts.get(availableVariantId) || 0
+                }))
+                .filter(entry => entry.count > 0);
+            const insertAt = firstEntryIndex < 0
+                ? remainingEntries.length
+                : Math.min(firstEntryIndex, remainingEntries.length);
+            remainingEntries.splice(insertAt, 0, ...updatedEntries);
+            collectionData.cards = remainingEntries;
+
+            for (const entry of pokedexEntriesByCardId.get(cardId) || []) {
+                if (featuredPokedexCards.get(entry.dexId) !== cardId) continue;
+                const nextFeatured = entry.ownedCards.find(ownedCard =>
+                    cardGroupId(ownedCard) !== cardId
+                    && remainingEntries.some(inventoryCard => inventoryCard.cardId === cardGroupId(ownedCard))
+                );
+                if (nextFeatured) featuredPokedexCards.set(entry.dexId, cardGroupId(nextFeatured));
+                else featuredPokedexCards.delete(entry.dexId);
+            }
+            collectionData.featuredPokedexCards = Object.fromEntries(featuredPokedexCards);
+            applyCollectionDocument(currentCollectionDocument(), { dirty: true });
+            const updatedCard = ownedCardsByApiId.get(cardId) || cardFromDetails(card.details);
+            renderDetails(updatedCard, false, true);
+            setImportStatus(`Updated ${formatVariant(variantId)} quantity for ${cardName(card)}.`);
+        }
+
+        function closeFloatingMenu(restoreFocus = false) {
+            if (!activeFloatingMenu) return;
+            const { button, menu, onPointerDown, onKeyDown, positionOnViewportChange } = activeFloatingMenu;
+            document.removeEventListener("pointerdown", onPointerDown, true);
+            document.removeEventListener("keydown", onKeyDown, true);
+            window.removeEventListener("resize", positionOnViewportChange);
+            window.removeEventListener("scroll", positionOnViewportChange, true);
+            button.setAttribute("aria-expanded", "false");
+            button.removeAttribute("aria-controls");
+            menu.remove();
+            activeFloatingMenu = null;
+            if (restoreFocus && button.isConnected) button.focus();
+        }
+
+        function openFloatingMenu(button, label, options, onSelect) {
+            closeFloatingMenu();
+            const menu = document.createElement("div");
+            menu.className = "floating-option-menu";
+            menu.id = `floating-option-menu-${++nextFloatingMenuId}`;
+            menu.setAttribute("role", "menu");
+            menu.setAttribute("aria-label", label);
+            for (const [value, optionLabel] of options) {
+                const option = document.createElement("button");
+                option.className = "floating-option";
+                option.type = "button";
+                option.textContent = optionLabel;
+                option.title = optionLabel;
+                option.setAttribute("role", "menuitem");
+                option.addEventListener("click", () => {
+                    closeFloatingMenu();
+                    onSelect(value);
+                });
+                menu.append(option);
+            }
+            document.body.append(menu);
+
+            const positionMenu = () => {
+                const buttonBounds = button.getBoundingClientRect();
+                const menuBounds = menu.getBoundingClientRect();
+                const fitsBelow = window.innerHeight - buttonBounds.bottom >= menuBounds.height + 8;
+                const top = fitsBelow
+                    ? buttonBounds.bottom + 4
+                    : Math.max(8, buttonBounds.top - menuBounds.height - 4);
+                const left = Math.min(
+                    Math.max(8, buttonBounds.right - menuBounds.width),
+                    window.innerWidth - menuBounds.width - 8
+                );
+                menu.style.top = `${top}px`;
+                menu.style.left = `${left}px`;
+            };
+            positionMenu();
+            button.setAttribute("aria-controls", menu.id);
+            button.setAttribute("aria-expanded", "true");
+
+            const onPointerDown = event => {
+                if (!menu.contains(event.target) && event.target !== button) closeFloatingMenu();
+            };
+            const onKeyDown = event => {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeFloatingMenu(true);
+                    return;
+                }
+                if (event.key === "Tab") {
+                    event.preventDefault();
+                    const focusable = [...document.querySelectorAll(
+                        "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])"
+                    )].filter(element => !menu.contains(element) && element.getClientRects().length > 0);
+                    const buttonIndex = focusable.indexOf(button);
+                    const next = focusable[buttonIndex + (event.shiftKey ? -1 : 1)];
+                    closeFloatingMenu();
+                    next?.focus();
+                    return;
+                }
+                const menuOptions = [...menu.querySelectorAll(".floating-option")];
+                const currentIndex = menuOptions.indexOf(document.activeElement);
+                let nextIndex = currentIndex;
+                if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % menuOptions.length;
+                else if (event.key === "ArrowUp") nextIndex = (currentIndex + menuOptions.length - 1) % menuOptions.length;
+                else if (event.key === "Home") nextIndex = 0;
+                else if (event.key === "End") nextIndex = menuOptions.length - 1;
+                else return;
+                event.preventDefault();
+                menuOptions[nextIndex].focus();
+            };
+            const positionOnViewportChange = () => {
+                if (!button.isConnected) closeFloatingMenu();
+                else positionMenu();
+            };
+            activeFloatingMenu = { button, menu, onPointerDown, onKeyDown, positionOnViewportChange };
+            document.addEventListener("pointerdown", onPointerDown, true);
+            document.addEventListener("keydown", onKeyDown, true);
+            window.addEventListener("resize", positionOnViewportChange);
+            window.addEventListener("scroll", positionOnViewportChange, true);
+            menu.querySelector(".floating-option").focus();
+        }
+
+        function renderCollectionActions(card) {
+            const actions = document.createElement("div");
+            actions.className = "collection-card-actions";
+            const addUnlimited = document.createElement("button");
+            addUnlimited.className = "add-card-button";
+            addUnlimited.type = "button";
+            addUnlimited.textContent = "+";
+            addUnlimited.title = "Add Unlimited";
+            addUnlimited.setAttribute("aria-label", `Add an unlimited ${cardName(card)} to My Collection`);
+            addUnlimited.addEventListener("click", () => addCardToCollection(card, "unlimited"));
+
+            const variantControl = document.createElement("div");
+            variantControl.className = "add-variant-control";
+            const openVariants = document.createElement("button");
+            openVariants.className = "add-variant-button";
+            openVariants.type = "button";
+            openVariants.textContent = "▾";
+            openVariants.title = "Select Variant";
+            openVariants.setAttribute("aria-label", `Select a variant of ${cardName(card)}`);
+            openVariants.setAttribute("aria-haspopup", "menu");
+            openVariants.setAttribute("aria-expanded", "false");
+            const variants = availableCardVariants(card).filter(([variantId]) => variantId !== "unlimited");
+            openVariants.disabled = variants.length === 0;
+            openVariants.addEventListener("click", () => {
+                if (activeFloatingMenu?.button === openVariants) {
+                    closeFloatingMenu();
+                    return;
+                }
+                openFloatingMenu(
+                    openVariants,
+                    `Variants for ${cardName(card)}`,
+                    variants,
+                    variantId => addCardToCollection(card, variantId)
+                );
+            });
+            variantControl.append(openVariants);
+            actions.append(addUnlimited, variantControl);
+            return actions;
+        }
+
         function sortCards(cards) {
             if (sortSelect.value === "added") {
                 return cards.sort((a, b) => a.inventoryOrder - b.inventoryOrder);
@@ -207,7 +548,7 @@
         function groupInventoryCards(cards, cardDetails) {
             const groupedCards = new Map();
             for (const [inventoryOrder, inventoryCard] of cards.entries()) {
-                const normalizedId = normalizeCardId(inventoryCard.cardId);
+                const normalizedId = normalizeCollectionCardId(inventoryCard.cardId);
                 let card = groupedCards.get(normalizedId);
                 if (!card) {
                     card = {
@@ -216,7 +557,9 @@
                         count: 0,
                         variants: [],
                         inventoryOrder,
-                        details: cardDetails[normalizedId] || null
+                        details: cardDetails instanceof Map
+                            ? cardDetails.get(normalizedId) || null
+                            : cardDetails[normalizedId] || null
                     };
                     groupedCards.set(normalizedId, card);
                 }
@@ -344,13 +687,20 @@
             if (!entries.length) {
                 grid.innerHTML = '<div class="empty-state"><strong>No cards available</strong>This set has no matching cached card records.</div>';
             } else {
-                for (const entry of entries) grid.append(renderCard(entry.card, { unowned: entry.unowned }));
+                for (const entry of entries) {
+                    grid.append(renderCard(entry.card, {
+                        unowned: entry.unowned,
+                        collectionActions: true
+                    }));
+                }
             }
             content.append(grid);
         }
 
         function renderMasterSetList() {
             const query = masterSetSearch.value.trim().toLocaleLowerCase();
+            const expandedSetIds = new Set([...masterSetList.querySelectorAll(".master-set[open]")]
+                .map(setGroup => setGroup.dataset.setId));
             masterSetList.replaceChildren();
             let visibleSetCount = 0;
             let matchingCardCount = 0;
@@ -390,6 +740,7 @@
                 const progress = totalCount ? Math.round((ownedCount / totalCount) * 100) : 0;
                 const setGroup = document.createElement("details");
                 setGroup.className = "master-set";
+                setGroup.dataset.setId = catalogSet.id;
                 setGroup.innerHTML = `
                     <summary>
                         <span class="master-set-summary">
@@ -431,6 +782,9 @@
                 if (query && !setMatches) {
                     setGroup.open = true;
                     renderCards();
+                } else if (expandedSetIds.has(catalogSet.id)) {
+                    setGroup.open = true;
+                    renderCards();
                 }
             }
             if (query && !visibleSetCount) {
@@ -457,121 +811,365 @@
                 empty.innerHTML = "<strong>No Pokémon match this search</strong>Try another name or Pokédex number.";
                 pokedexGrid.append(empty);
             }
-            for (const entry of entries) {
-                const owned = entry.ownedCards.length > 0;
-                const featuredId = featuredPokedexCards.get(entry.dexId);
-                const featured = entry.ownedCards.find(card => cardGroupId(card) === featuredId)
-                    || entry.featuredCard;
-                featuredPokedexCards.set(entry.dexId, cardGroupId(featured));
-
-                const renderPokemonCard = selectedCard => {
-                    const cardElement = renderCard(selectedCard, {
-                        unowned: !owned,
-                        hideHp: true,
-                        hideVariants: true,
-                        preserveImageAlt: !owned,
-                        onImageUnavailable: !owned ? failedCard => {
-                            failedPokedexImageCards.add(cardGroupId(failedCard));
-                            const nextCard = entry.imageCandidates.find(candidate =>
-                                !failedPokedexImageCards.has(cardGroupId(candidate))
-                            );
-                            if (nextCard) {
-                                entry.featuredCard = nextCard;
-                                cardElement.replaceWith(renderPokemonCard(nextCard));
-                                return true;
-                            }
-                            return false;
-                        } : null
-                    });
-                    cardElement.classList.add("pokemon-card");
-                    cardElement.querySelector(".card-name").textContent = entry.name;
-                    cardElement.querySelector(".card-number").textContent = `#${String(entry.dexId).padStart(3, "0")}`;
-                    cardElement.querySelector(".set-name").textContent = `${setName(selectedCard)} · ${selectedCard.details?.localId || ""}`;
-                    const countElement = cardElement.querySelector(".owned-count");
-                    if (owned) {
-                        countElement.textContent = `×${entry.ownedCount}`;
-                        countElement.setAttribute("aria-label", `${entry.ownedCount} cards owned`);
-                    } else {
-                        cardElement.querySelector(".unowned-count").textContent = "Not collected";
-                    }
-
-                    if (entry.ownedCards.length > 1) {
-                        const select = document.createElement("select");
-                        select.className = "featured-card-select";
-                        select.setAttribute("aria-label", `Featured card for ${entry.name}`);
-                        for (const ownedCard of entry.ownedCards) {
-                            const option = new Option(
-                                `${setName(ownedCard)} · ${ownedCard.details.localId} ${cardName(ownedCard)}`,
-                                cardGroupId(ownedCard),
-                                false,
-                                cardGroupId(ownedCard) === cardGroupId(selectedCard)
-                            );
-                            select.add(option);
-                        }
-                        select.addEventListener("change", () => {
-                            featuredPokedexCards.set(entry.dexId, select.value);
-                            renderPokedex();
-                        });
-                        cardElement.querySelector(".card-info").append(select);
-                    } else if (owned) {
-                        const note = document.createElement("span");
-                        note.className = "featured-card-label";
-                        note.textContent = "Your featured card";
-                        cardElement.querySelector(".card-info").append(note);
-                    }
-                    return cardElement;
-                };
-                const cardElement = renderPokemonCard(featured);
-                pokedexGrid.append(cardElement);
-            }
+            for (const entry of entries) pokedexGrid.append(renderPokedexEntry(entry));
             document.getElementById("pokedex-count").textContent = `${entries.length} of ${pokedexEntries.length} Pokémon`;
         }
 
-        function restoreBinderPages() {
-            try {
-                const stored = localStorage.getItem("pokemon-gallery-binder");
-                if (!stored) return;
-                const state = JSON.parse(stored);
-                if (!state || !Array.isArray(state.pages)) {
-                    throw new Error("Saved binder data is not in the expected format.");
+        function renderPokedexEntry(entry) {
+            const owned = entry.ownedCards.length > 0;
+            const featuredId = featuredPokedexCards.get(entry.dexId);
+            const featured = entry.ownedCards.find(card => cardGroupId(card) === featuredId)
+                || entry.featuredCard;
+
+            const renderPokemonCard = selectedCard => {
+                const cardElement = renderCard(selectedCard, {
+                    unowned: !owned,
+                    hideHp: true,
+                    hideVariants: true,
+                    collectionActions: CAN_EDIT_COLLECTION,
+                    preserveImageAlt: !owned,
+                    onImageUnavailable: !owned ? failedCard => {
+                        failedPokedexImageCards.add(cardGroupId(failedCard));
+                        const nextCard = entry.imageCandidates.find(candidate =>
+                            !failedPokedexImageCards.has(cardGroupId(candidate))
+                        );
+                        if (nextCard) {
+                            entry.featuredCard = nextCard;
+                            cardElement.replaceWith(renderPokemonCard(nextCard));
+                            return true;
+                        }
+                        return false;
+                    } : null
+                });
+                cardElement.classList.add("pokemon-card");
+                cardElement.dataset.dexId = String(entry.dexId);
+                cardElement.querySelector(".card-name").textContent = entry.name;
+                cardElement.querySelector(".card-number").textContent = `#${String(entry.dexId).padStart(3, "0")}`;
+                cardElement.querySelector(".set-name").textContent = `${setName(selectedCard)} · ${selectedCard.details?.localId || ""}`;
+                const countElement = cardElement.querySelector(".owned-count");
+                if (owned) {
+                    countElement.textContent = `×${entry.ownedCount}`;
+                    countElement.setAttribute("aria-label", `${entry.ownedCount} cards owned`);
+                } else {
+                    cardElement.querySelector(".unowned-count").textContent = "Not collected";
                 }
-                for (const page of state.pages) {
-                    if (!Number.isInteger(page.rows) || page.rows < 2 || page.rows > 6
-                        || !Number.isInteger(page.columns) || page.columns < 2 || page.columns > 6
-                        || !Array.isArray(page.slots) || page.slots.length !== page.rows * page.columns) {
-                        throw new Error("A saved binder page has invalid dimensions or pockets.");
-                    }
-                    binderPages.push({
-                        id: String(page.id),
-                        rows: page.rows,
-                        columns: page.columns,
-                        slots: page.slots.map(slot => {
-                            if (slot === null) return null;
-                            if (!slot || typeof slot.cardId !== "string") {
-                                throw new Error("A saved binder pocket has invalid card data.");
+
+                if (CAN_EDIT_COLLECTION && entry.ownedCards.length > 1) {
+                    const featuredControl = document.createElement("div");
+                    featuredControl.className = "featured-card-control";
+                    const openSelector = document.createElement("button");
+                    openSelector.className = "featured-card-button";
+                    openSelector.type = "button";
+                    openSelector.textContent = "↻";
+                    openSelector.title = "Choose featured Pokémon card";
+                    openSelector.setAttribute("aria-label", `Choose featured card for ${entry.name}`);
+                    openSelector.setAttribute("aria-haspopup", "menu");
+                    openSelector.setAttribute("aria-expanded", "false");
+                    const choices = entry.ownedCards.map(ownedCard => [
+                        cardGroupId(ownedCard),
+                        `${setName(ownedCard)} · ${ownedCard.details.localId} ${cardName(ownedCard)}`
+                    ]);
+                    openSelector.addEventListener("click", () => {
+                        if (activeFloatingMenu?.button === openSelector) {
+                            closeFloatingMenu();
+                            return;
+                        }
+                        openFloatingMenu(
+                            openSelector,
+                            `Featured card for ${entry.name}`,
+                            choices,
+                            cardId => {
+                                if (cardId === cardGroupId(selectedCard)) return;
+                                featuredPokedexCards.set(entry.dexId, cardId);
+                                saveFeaturedPokedexCards();
+                                cardElement.replaceWith(renderPokedexEntry(entry));
                             }
-                            return { cardId: normalizeCardId(slot.cardId), planned: Boolean(slot.planned) };
-                        })
+                        );
                     });
+                    featuredControl.append(openSelector);
+                    cardElement.querySelector(".card-info").append(featuredControl);
+                } else if (owned) {
+                    const note = document.createElement("span");
+                    note.className = "featured-card-label";
+                    note.textContent = CAN_EDIT_COLLECTION ? "Your featured card" : "Featured card";
+                    cardElement.querySelector(".card-info").append(note);
                 }
-                activeBinderPageId = binderPages.some(page => page.id === state.activePageId)
-                    ? state.activePageId
-                    : binderPages[0]?.id || null;
+                return cardElement;
+            };
+            return renderPokemonCard(featured);
+        }
+
+        function currentBinderState() {
+            return { pages: binderPages, activePageId: activeBinderPageId };
+        }
+
+        function currentCollectionDocument() {
+            return {
+                version: 1,
+                exportedAt: new Date().toISOString(),
+                cards: collectionData.cards,
+                binder: currentBinderState(),
+                featuredPokedexCards: Object.fromEntries(featuredPokedexCards)
+            };
+        }
+
+        function setImportStatus(message, isError = false) {
+            const status = document.getElementById("collection-file-status");
+            status.textContent = message;
+            status.className = isError ? "error" : "";
+        }
+
+        function updateSaveStatus(message, state = "") {
+            const status = document.getElementById("save-status");
+            status.textContent = message;
+            status.className = state;
+            document.getElementById("save-collection").disabled = !initialLoadComplete;
+        }
+
+        function persistCollectionDraft() {
+            if (!CAN_EDIT_COLLECTION) return false;
+            try {
+                localStorage.setItem(COLLECTION_STORAGE_KEY, JSON.stringify({
+                    dirty: collectionDirty,
+                    collection: currentCollectionDocument()
+                }));
+                return true;
             } catch (error) {
-                binderStorageError = `Could not restore binder: ${error.message}`;
+                updateSaveStatus(`Unsaved · local backup failed: ${error.message}`, "error");
+                return false;
+            }
+        }
+
+        function markCollectionDirty() {
+            if (!CAN_EDIT_COLLECTION) return;
+            collectionDirty = true;
+            updateSaveStatus("Unsaved changes", "unsaved");
+            clearTimeout(collectionDraftPersistTimeout);
+            collectionDraftPersistTimeout = setTimeout(() => {
+                collectionDraftPersistTimeout = null;
+                persistCollectionDraft();
+            }, 200);
+        }
+
+        async function saveCollectionToFile() {
+            if (!CAN_EDIT_COLLECTION) return;
+            const fileContents = JSON.stringify(currentCollectionDocument(), null, 2);
+            try {
+                if (typeof window.showSaveFilePicker === "function") {
+                    const fileHandle = await window.showSaveFilePicker({
+                        suggestedName: "collection.json",
+                        types: [{
+                            description: "Pokémon collection JSON",
+                            accept: { "application/json": [".json"] }
+                        }]
+                    });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(fileContents);
+                    await writable.close();
+                } else {
+                    const blob = new Blob([fileContents], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = "collection.json";
+                    document.body.append(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }
+                collectionDirty = false;
+                updateSaveStatus("Saved collection.json", "");
+                clearTimeout(collectionDraftPersistTimeout);
+                collectionDraftPersistTimeout = null;
+                persistCollectionDraft();
+                setImportStatus("Saved collection.json. Place it beside the app to load it automatically on another device.");
+            } catch (error) {
+                if (error.name === "AbortError") return;
+                updateSaveStatus(`Save failed: ${error.message}`, "error");
+                setImportStatus(`Could not save collection.json: ${error.message}`, true);
+            }
+        }
+
+        async function importCollectionFile(file) {
+            if (!CAN_EDIT_COLLECTION) return;
+            try {
+                const imported = JSON.parse(await file.text());
+                applyCollectionDocument(imported, { dirty: true, preserveMissingAppData: true });
+                const correctedIds = (Array.isArray(imported.cards) ? imported.cards : [])
+                    .filter(card => typeof card.cardId === "string")
+                    .filter(card => normalizeCollectionCardId(card.cardId) !== card.cardId.trim()).length;
+                setImportStatus(`Imported ${collection.length} unique cards${correctedIds ? `; corrected ${correctedIds} mapped or padded card IDs` : ""}. Save to download collection.json.`);
+            } catch (error) {
+                setImportStatus(`Could not import ${file.name}: ${error.message}`, true);
+            }
+        }
+
+        function updateCollectionSummary() {
+            document.getElementById("unique-count").textContent = collection.length;
+            document.getElementById("total-count").textContent = collection.reduce((sum, card) => sum + card.count, 0);
+            document.getElementById("set-count").textContent = new Set(collection.map(setName)).size;
+        }
+
+        function rebuildCollectionViews() {
+            collection = groupInventoryCards(collectionData.cards, allCardsById);
+            ownedCardsByApiId = new Map();
+            for (const card of collection) {
+                if (card.details?.id) ownedCardsByApiId.set(normalizeCardId(card.details.id), card);
+                ownedCardsByApiId.set(cardGroupId(card), card);
+            }
+
+            const uniqueCardDetails = new Map();
+            for (const cardDetails of allCardsById.values()) {
+                if (cardDetails?.id) uniqueCardDetails.set(normalizeCardId(cardDetails.id), cardDetails);
+            }
+            const detailsList = [...uniqueCardDetails.values()];
+            catalogCards = detailsList
+                .map(details => cardFromDetails(details, ownedCardsByApiId.get(normalizeCardId(details.id))))
+                .sort((a, b) => setCatalogOrder(a) - setCatalogOrder(b)
+                    || setCardOrder(a) - setCardOrder(b)
+                    || compareText(cardName(a), cardName(b)));
+            pokedexEntries = buildPokedexEntries(detailsList);
+            pokedexEntriesByCardId.clear();
+            for (const entry of pokedexEntries) {
+                for (const details of entry.cards) {
+                    const cardId = normalizeCardId(details.id);
+                    if (!pokedexEntriesByCardId.has(cardId)) pokedexEntriesByCardId.set(cardId, []);
+                    pokedexEntriesByCardId.get(cardId).push(entry);
+                }
+            }
+            updateCollectionSummary();
+            populateFilters();
+            renderCollection();
+            collectionNeedsRender = false;
+            renderMasterSetList();
+            renderBinder();
+            if (pokedexRendered) renderPokedex();
+
+            const missingCount = collection.filter(card => !card.details).length;
+            const status = document.getElementById("status");
+            status.className = missingCount ? "error" : "";
+            status.textContent = missingCount
+                ? `${missingCount} card${missingCount === 1 ? "" : "s"} missing from the local database. Update tcgdex-database.json and reload.`
+                : "";
+        }
+
+        function updateRenderedCardCollectionState(cardElement, card) {
+            cardElement.classList.remove("unowned");
+            const count = cardElement.querySelector(".card-bottom .unowned-count, .card-bottom .owned-count");
+            if (count) {
+                count.className = "owned-count";
+                count.textContent = `×${card.count}`;
+                count.setAttribute("aria-label", `${card.count} cards owned`);
+            }
+
+            const existingVariants = cardElement.querySelector(".variant-row");
+            if (card.variants.length) {
+                const row = existingVariants || document.createElement("div");
+                row.className = "tag-row variant-row";
+                row.setAttribute("aria-label", "Owned variants");
+                row.replaceChildren(...card.variants.map(variant => {
+                    const tag = document.createElement("span");
+                    tag.className = "tag";
+                    tag.textContent = formatVariant(variant.variantId);
+                    return tag;
+                }));
+                if (!existingVariants) cardElement.querySelector(".card-info").insertBefore(
+                    row,
+                    cardElement.querySelector(".card-bottom")
+                );
+            }
+        }
+
+        function refreshCollectionAfterCardAdd(cardId, addedCard, isNewUniqueCard) {
+            updateCollectionSummary();
+            collectionNeedsRender = true;
+            if (document.getElementById("collection-tab").getAttribute("aria-selected") === "true"
+                && collectionNeedsRender) {
+                populateFilters();
+                renderCollection();
+                collectionNeedsRender = false;
+            }
+
+            const setId = addedCard.details?.set?.id;
+            const setDetails = databaseSets[setId];
+            if (isNewUniqueCard && setDetails) {
+                const totalCount = setDetails.cardIds?.length || 0;
+                const ownedCount = (setDetails.cardIds || []).filter(id =>
+                    ownedCardsByApiId.has(normalizeCardId(id))
+                ).length;
+                const setGroup = [...masterSetList.querySelectorAll(".master-set")]
+                    .find(element => element.dataset.setId === setId);
+                if (setGroup) {
+                    const progress = setGroup.querySelector(".master-set-progress");
+                    const count = setGroup.querySelector(".master-set-summary-meta");
+                    if (progress) {
+                        progress.setAttribute("aria-valuenow", String(ownedCount));
+                        progress.firstElementChild.style.width = `${totalCount ? Math.round(ownedCount / totalCount * 100) : 0}%`;
+                    }
+                    if (count) count.textContent = `${ownedCount} / ${totalCount}`;
+                }
+            }
+
+            const cardSelectorId = CSS.escape(cardId);
+            for (const cardElement of masterSetList.querySelectorAll(`.card[data-card-id="${cardSelectorId}"]`)) {
+                updateRenderedCardCollectionState(cardElement, addedCard);
+            }
+
+            const affectedEntries = pokedexEntriesByCardId.get(cardId) || [];
+            for (const entry of affectedEntries) {
+                const previouslyOwned = entry.ownedCards.length > 0;
+                entry.ownedCards = entry.ownedCards.filter(card => cardGroupId(card) !== cardId);
+                entry.ownedCards.push(addedCard);
+                entry.ownedCards.sort((a, b) => a.inventoryOrder - b.inventoryOrder);
+                entry.ownedCount = entry.ownedCards.reduce((sum, card) => sum + card.count, 0);
+                if (!previouslyOwned || !entry.ownedCards.some(card =>
+                    cardGroupId(card) === featuredPokedexCards.get(entry.dexId)
+                )) {
+                    featuredPokedexCards.set(entry.dexId, cardId);
+                }
+                const existingEntry = pokedexGrid.querySelector(`.pokemon-card[data-dex-id="${entry.dexId}"]`);
+                if (existingEntry) existingEntry.replaceWith(renderPokedexEntry(entry));
+            }
+            if (isNewUniqueCard && document.getElementById("binder-tab").getAttribute("aria-selected") === "true") {
+                renderBinder();
+            }
+        }
+
+        function applyCollectionDocument(document, { dirty = true, preserveMissingAppData = false } = {}) {
+            const normalized = normalizeCollectionDocument(document);
+            const binder = normalized.hasBinder
+                ? normalized.binder
+                : preserveMissingAppData ? currentBinderState() : { pages: [], activePageId: null };
+            const featured = normalized.hasFeaturedCards
+                ? normalized.featuredPokedexCards
+                : preserveMissingAppData ? Object.fromEntries(featuredPokedexCards) : {};
+            collectionData = { version: 1, cards: normalized.cards, binder, featuredPokedexCards: featured };
+            binderPages.splice(0, binderPages.length, ...binder.pages);
+            activeBinderPageId = binder.activePageId;
+            featuredPokedexCards.clear();
+            for (const [dexId, cardId] of Object.entries(featured)) {
+                featuredPokedexCards.set(Number(dexId), cardId);
+            }
+            rebuildCollectionViews();
+            collectionDirty = dirty;
+            updateSaveStatus(dirty ? "Unsaved changes" : "Saved", dirty ? "unsaved" : "");
+            if (dirty) {
+                clearTimeout(collectionDraftPersistTimeout);
+                collectionDraftPersistTimeout = null;
+                persistCollectionDraft();
             }
         }
 
         function saveBinderPages() {
-            try {
-                localStorage.setItem("pokemon-gallery-binder", JSON.stringify({
-                    pages: binderPages,
-                    activePageId: activeBinderPageId
-                }));
-                binderStorageError = "";
-            } catch (error) {
-                binderStorageError = `Could not save binder changes: ${error.message}`;
-            }
+            if (!CAN_EDIT_COLLECTION) return;
+            collectionData.binder = currentBinderState();
+            markCollectionDirty();
+        }
+
+        function saveFeaturedPokedexCards() {
+            if (!CAN_EDIT_COLLECTION) return;
+            collectionData.featuredPokedexCards = Object.fromEntries(featuredPokedexCards);
+            markCollectionDirty();
         }
 
         function binderCardForId(cardId) {
@@ -598,7 +1196,9 @@
             if (!binderPages.length) {
                 const empty = document.createElement("div");
                 empty.className = "empty-state binder-empty";
-                empty.innerHTML = "<strong>Your binder is empty</strong>Choose a page size above and add your first page.";
+                empty.innerHTML = CAN_EDIT_COLLECTION
+                    ? "<strong>Your binder is empty</strong>Choose a page size above and add your first page."
+                    : "<strong>No binder pages are available</strong>This shared collection does not include any saved binder pages.";
                 content.append(empty);
                 return;
             }
@@ -611,7 +1211,7 @@
                 tab.setAttribute("aria-pressed", String(page.id === activeBinderPageId));
                 tab.addEventListener("click", () => {
                     activeBinderPageId = page.id;
-                    saveBinderPages();
+                    if (CAN_EDIT_COLLECTION) collectionData.binder = currentBinderState();
                     renderBinder();
                 });
                 pageTabs.append(tab);
@@ -632,7 +1232,9 @@
                 const pocket = document.createElement("button");
                 pocket.className = "binder-pocket";
                 pocket.type = "button";
-                pocket.draggable = Boolean(slot);
+                pocket.draggable = CAN_EDIT_COLLECTION && Boolean(slot);
+                pocket.disabled = !CAN_EDIT_COLLECTION;
+                if (!CAN_EDIT_COLLECTION) pocket.setAttribute("aria-disabled", "true");
                 pocket.dataset.slotIndex = String(index);
                 const card = slot && binderCardForId(slot.cardId);
                 if (card) {
@@ -659,20 +1261,27 @@
                 }
 
                 pocket.addEventListener("click", () => {
+                    if (!CAN_EDIT_COLLECTION) return;
                     if (Date.now() - lastBinderDropAt < 400) return;
                     openBinderPicker(page.id, index);
                 });
                 pocket.addEventListener("dragstart", event => {
+                    if (!CAN_EDIT_COLLECTION) {
+                        event.preventDefault();
+                        return;
+                    }
                     event.dataTransfer.setData("text/plain", String(index));
                     event.dataTransfer.effectAllowed = "move";
                     pocket.classList.add("binder-pocket-dragging");
                 });
                 pocket.addEventListener("dragend", () => pocket.classList.remove("binder-pocket-dragging"));
                 pocket.addEventListener("dragover", event => {
+                    if (!CAN_EDIT_COLLECTION) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
                 });
                 pocket.addEventListener("drop", event => {
+                    if (!CAN_EDIT_COLLECTION) return;
                     event.preventDefault();
                     const sourceIndex = Number(event.dataTransfer.getData("text/plain"));
                     const targetIndex = index;
@@ -690,6 +1299,7 @@
         }
 
         function openBinderPicker(pageId, slotIndex) {
+            if (!CAN_EDIT_COLLECTION) return;
             binderPickerTarget = { pageId, slotIndex };
             const targetPage = binderPages.find(page => page.id === pageId);
             const currentSlot = targetPage?.slots[slotIndex];
@@ -758,6 +1368,7 @@
         }
 
         function addBinderPage() {
+            if (!CAN_EDIT_COLLECTION) return;
             const rows = Number(document.getElementById("binder-rows").value);
             const columns = Number(document.getElementById("binder-columns").value);
             const page = {
@@ -773,6 +1384,7 @@
         }
 
         function removeActiveBinderPage() {
+            if (!CAN_EDIT_COLLECTION) return;
             const pageIndex = binderPages.findIndex(page => page.id === activeBinderPageId);
             if (pageIndex < 0) return;
             const page = binderPages[pageIndex];
@@ -796,6 +1408,9 @@
         }
 
         function populateFilters() {
+            const selectedValues = Object.fromEntries(
+                Object.entries(filterElements).map(([name, select]) => [name, select.value])
+            );
             addFilterOptions(filterElements.set, new Set(collection.map(setName)), "All sets");
             addFilterOptions(filterElements.type, new Set(collection.flatMap(card => card.details?.types || [])), "All types");
             addFilterOptions(filterElements.rarity, new Set(collection.map(card => card.details?.rarity)), "All rarities");
@@ -803,6 +1418,11 @@
                 cardVariants(card).map(variant => formatVariant(variant.variantId))
             )), "All variants");
             addFilterOptions(filterElements.illustrator, new Set(collection.map(card => card.details?.illustrator)), "All illustrators");
+            for (const [name, select] of Object.entries(filterElements)) {
+                if ([...select.options].some(option => option.value === selectedValues[name])) {
+                    select.value = selectedValues[name];
+                }
+            }
         }
 
         function renderCard(card, options = {}) {
@@ -814,6 +1434,7 @@
             ).join("");
             const cardElement = document.createElement("article");
             cardElement.className = "card";
+            cardElement.dataset.cardId = cardGroupId(card);
             if (options.unowned) cardElement.classList.add("unowned");
             cardElement.innerHTML = `
                 <button class="card-image-button" type="button" aria-label="View ${escapeHtml(cardName(card))} details">
@@ -834,7 +1455,12 @@
                             : `<span class="owned-count">×${escapeHtml(card.count)}</span>`}
                     </div>
                 </div>`;
-            cardElement.querySelector(".card-image-button").addEventListener("click", () => renderDetails(card));
+            if (CAN_EDIT_COLLECTION && options.collectionActions) {
+                cardElement.querySelector(".card-info").append(renderCollectionActions(card));
+            }
+            cardElement.querySelector(".card-image-button").addEventListener("click", () =>
+                renderDetails(card, options.collectionActions, options.editableVariants)
+            );
             const image = cardElement.querySelector("img");
             image.addEventListener("error", () => handleCardImageError(image, card, options));
             return cardElement;
@@ -864,18 +1490,21 @@
                 empty.className = "empty-state";
                 empty.innerHTML = collection.length
                     ? "<strong>No cards match these filters</strong>Try a different search or reset the filters."
-                    : "<strong>Your collection is empty</strong>Add cards to data.json to see them here.";
+                    : "<strong>Your collection is empty</strong>Import a collection or add cards from Master Sets and Pokédex.";
                 grid.append(empty);
                 return;
             }
-            for (const card of cards) grid.append(renderCard(card, { hideHp: true }));
+            for (const card of cards) grid.append(renderCard(card, {
+                hideHp: true,
+                editableVariants: CAN_EDIT_COLLECTION
+            }));
         }
 
         function detailSection(title, body) {
             return body ? `<section class="detail-section"><h3>${escapeHtml(title)}</h3>${body}</section>` : "";
         }
 
-        function renderDetails(card) {
+        function renderDetails(card, allowCollectionActions = false, editableVariants = false) {
             const detail = card.details || {};
             const set = detail.set || {};
             const attacks = (detail.attacks || []).map(attack =>
@@ -884,9 +1513,27 @@
             const abilities = (detail.abilities || []).map(ability =>
                 `<li><strong>${escapeHtml(ability.name)}</strong>${ability.type ? ` · ${escapeHtml(ability.type)}` : ""}${ability.effect ? `<br><span>${escapeHtml(ability.effect)}</span>` : ""}</li>`
             ).join("");
-            const variants = cardVariants(card).map(variant =>
-                `<li><strong>${escapeHtml(formatVariant(variant.variantId))}</strong> · Owned ×${escapeHtml(variant.count)}</li>`
-            ).join("");
+            const ownedVariants = new Map();
+            for (const variant of cardVariants(card)) {
+                ownedVariants.set(
+                    variant.variantId,
+                    (ownedVariants.get(variant.variantId) || 0) + variant.count
+                );
+            }
+            const variants = availableCardVariants(card).map(([variantId, label]) => {
+                const quantity = ownedVariants.get(variantId) || 0;
+                if (!editableVariants) {
+                    return `<li><strong>${escapeHtml(label)}</strong> · Owned ×${escapeHtml(quantity)}</li>`;
+                }
+                return `<li class="variant-quantity-row" data-variant-id="${escapeHtml(variantId)}">
+                    <strong>${escapeHtml(label)}</strong>
+                    <div class="variant-quantity-control">
+                        <button class="variant-quantity-button" type="button" data-quantity-step="-1" aria-label="Remove one ${escapeHtml(label)} copy" ${quantity === 0 ? "disabled" : ""}>−</button>
+                        <input class="variant-quantity-input" type="number" min="0" step="1" value="${escapeHtml(quantity)}" aria-label="${escapeHtml(label)} copies owned">
+                        <button class="variant-quantity-button" type="button" data-quantity-step="1" aria-label="Add one ${escapeHtml(label)} copy">+</button>
+                    </div>
+                </li>`;
+            }).join("");
             const setCount = set.cardCount?.total ? `${set.cardCount.total} cards in set` : "";
             const description = detail.description || "";
             const illustrator = detail.illustrator || "";
@@ -906,7 +1553,7 @@
                     <img class="detail-image" src="${escapeHtml(imageUrl(card) || missingImageUrl)}" alt="${escapeHtml(cardName(card))} Pokémon card">
                     <div>
                         ${detailSection("Card", `<p>${escapeHtml(stats || "Card details unavailable")}${detail.rarity ? `<br>${escapeHtml(detail.rarity)}` : ""}<br>Owned ×${escapeHtml(card.count)}</p>`)}
-                        ${variants ? detailSection("Variants", `<ul class="detail-list">${variants}</ul>`) : ""}
+                        ${variants ? detailSection("Variants", `<ul class="detail-list variant-quantity-list">${variants}</ul>`) : ""}
                         ${detailSection("Illustrator", `<p>${escapeHtml(illustrator || "Not listed by TCGdex")}</p>`)}
                         ${description ? detailSection("Description", `<p>${escapeHtml(description)}</p>`) : ""}
                         ${abilities ? detailSection("Abilities", `<ul class="detail-list">${abilities}</ul>`) : ""}
@@ -914,6 +1561,40 @@
                         ${detailSection("Set", `<p>${escapeHtml(set.name || setName(card))}${setCount ? `<br>${escapeHtml(setCount)}` : ""}${set.id ? `<br>Set code: ${escapeHtml(set.id)}` : ""}</p>`)}
                     </div>
                 </div>`;
+            if (CAN_EDIT_COLLECTION && allowCollectionActions) {
+                dialog.querySelector(".detail-layout > div").append(renderCollectionActions(card));
+            }
+            if (CAN_EDIT_COLLECTION && editableVariants) {
+                const rows = dialog.querySelectorAll(".variant-quantity-row");
+                for (const row of rows) {
+                    const variantId = row.dataset.variantId;
+                    const input = row.querySelector(".variant-quantity-input");
+                    const updateQuantity = quantity => {
+                        if (!Number.isInteger(quantity) || quantity < 0) {
+                            input.value = String(ownedVariants.get(variantId) || 0);
+                            return;
+                        }
+                        setVariantQuantity(card, variantId, quantity);
+                        const updatedRow = dialog.querySelector(
+                            `.variant-quantity-row[data-variant-id="${CSS.escape(variantId)}"]`
+                        );
+                        const updatedInput = updatedRow?.querySelector(".variant-quantity-input");
+                        updatedInput?.focus();
+                    };
+                    input.addEventListener("change", () => updateQuantity(Number(input.value)));
+                    input.addEventListener("keydown", event => {
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            input.blur();
+                        }
+                    });
+                    row.querySelectorAll(".variant-quantity-button").forEach(button => {
+                        button.addEventListener("click", () => {
+                            updateQuantity((ownedVariants.get(variantId) || 0) + Number(button.dataset.quantityStep));
+                        });
+                    });
+                }
+            }
             const detailImage = dialog.querySelector(".detail-image");
             detailImage.addEventListener("click", () => {
                 const enlargedImage = artDialog.querySelector(".enlarged-image");
@@ -925,69 +1606,86 @@
             detailImage.addEventListener("error", () => handleCardImageError(detailImage, card));
             dialog.querySelector(".close-button").addEventListener("click", () => dialog.close());
             document.body.classList.add("dialog-open");
-            dialog.showModal();
+            if (!dialog.open) dialog.showModal();
         }
 
         async function loadCollection() {
             try {
-                const [inventoryResponse, databaseResponse] = await Promise.all([
-                    fetch("./data.json"),
-                    fetch("./tcgdex-database.json")
+                const [databaseResponse, collectionResponse] = await Promise.all([
+                    fetch("./tcgdex-database.json"),
+                    fetch("./collection.json", { cache: "no-store" })
                 ]);
-                if (!inventoryResponse.ok) throw new Error(`Could not load data.json (${inventoryResponse.status}).`);
                 if (!databaseResponse.ok) throw new Error(`Could not load tcgdex-database.json (${databaseResponse.status}).`);
-                const [inventory, database] = await Promise.all([
-                    inventoryResponse.json(),
-                    databaseResponse.json()
-                ]);
-                if (!Array.isArray(inventory.cards)) throw new Error("data.json must contain a cards array.");
+                if (!collectionResponse.ok && collectionResponse.status !== 404) {
+                    throw new Error(`Could not load collection.json (${collectionResponse.status}).`);
+                }
+                const database = await databaseResponse.json();
                 if (!database.cards || typeof database.cards !== "object") {
                     throw new Error("tcgdex-database.json must contain a cards object.");
                 }
-                document.getElementById("total-count").textContent = inventory.cards.reduce((sum, card) => sum + (Number(card.count) || 0), 0);
 
                 databaseSets = database.sets || {};
                 availableSets = database.availableSets || [];
                 setOrder = new Map(availableSets.map((set, index) => [set.id, index]));
                 allCardsById = new Map(Object.entries(database.cards));
-                collection = groupInventoryCards(inventory.cards, database.cards);
-                ownedCardsByApiId = new Map();
-                for (const card of collection) {
-                    if (card.details?.id) ownedCardsByApiId.set(normalizeCardId(card.details.id), card);
-                    ownedCardsByApiId.set(cardGroupId(card), card);
+
+                let sourceDocument = null;
+                let localDraftDocument = null;
+                let dirty = false;
+                const localDraft = CAN_EDIT_COLLECTION
+                    ? localStorage.getItem(COLLECTION_STORAGE_KEY)
+                    : null;
+                if (localDraft) {
+                    const draft = JSON.parse(localDraft);
+                    if (!draft || !draft.collection) throw new Error("The browser's saved collection draft is invalid. Import a collection JSON file to recover.");
+                    localDraftDocument = draft.collection;
+                    if (draft.dirty) {
+                        const restoreDraft = window.confirm(
+                            "An unsaved browser draft was found. Would you like to load it? Choose Cancel to discard it and load collection.json instead."
+                        );
+                        if (restoreDraft) {
+                            sourceDocument = draft.collection;
+                            dirty = true;
+                        } else {
+                            localStorage.removeItem(COLLECTION_STORAGE_KEY);
+                            localDraftDocument = null;
+                        }
+                    }
                 }
-                const uniqueCardDetails = new Map();
-                for (const cardDetails of Object.values(database.cards)) {
-                    if (cardDetails?.id) uniqueCardDetails.set(normalizeCardId(cardDetails.id), cardDetails);
-                }
-                catalogCards = [...uniqueCardDetails.values()]
-                    .map(details => cardFromDetails(details, ownedCardsByApiId.get(normalizeCardId(details.id))))
-                    .sort((a, b) => setCatalogOrder(a) - setCatalogOrder(b)
-                        || setCardOrder(a) - setCardOrder(b)
-                        || compareText(cardName(a), cardName(b)));
-                pokedexEntries = buildPokedexEntries([...uniqueCardDetails.values()]);
-                restoreBinderPages();
-                document.getElementById("unique-count").textContent = collection.length;
-                document.getElementById("set-count").textContent = new Set(collection.map(setName)).size;
-                populateFilters();
-                renderCollection();
-                renderMasterSetList();
-                renderBinder();
-                if (document.getElementById("pokedex-tab").getAttribute("aria-selected") === "true") {
-                    renderPokedex();
+                if (!sourceDocument && collectionResponse.ok) {
+                    sourceDocument = await collectionResponse.json();
+                } else if (!sourceDocument && localDraftDocument) {
+                    sourceDocument = localDraftDocument;
+                } else if (!sourceDocument) {
+                    sourceDocument = { version: 1, cards: [] };
                 }
 
-                const missingCount = collection.filter(card => !card.details).length;
-                if (missingCount) {
-                    const status = document.getElementById("status");
-                    status.className = "error";
-                    status.textContent = `${missingCount} card${missingCount === 1 ? "" : "s"} missing from the local database. Run node build-data.js and reload.`;
+                if (localDraftDocument && sourceDocument !== localDraftDocument) {
+                    const savedDraft = normalizeCollectionDocument(localDraftDocument);
+                    if (!sourceDocument.binder && savedDraft.hasBinder) {
+                        sourceDocument = { ...sourceDocument, binder: localDraftDocument.binder };
+                    }
+                    if (!sourceDocument.featuredPokedexCards && savedDraft.hasFeaturedCards) {
+                        sourceDocument = { ...sourceDocument, featuredPokedexCards: localDraftDocument.featuredPokedexCards };
+                    }
                 }
+
+                if (CAN_EDIT_COLLECTION && !sourceDocument.binder) {
+                    const legacyBinder = localStorage.getItem("pokemon-gallery-binder");
+                    if (legacyBinder) {
+                        const binder = normalizeBinderState(JSON.parse(legacyBinder));
+                        sourceDocument = { ...sourceDocument, binder };
+                    }
+                }
+                applyCollectionDocument(sourceDocument, { dirty });
+                initialLoadComplete = true;
+                updateSaveStatus(dirty ? "Unsaved changes" : "Saved", dirty ? "unsaved" : "");
             } catch (error) {
                 document.getElementById("results-count").textContent = "Could not load your collection.";
                 const status = document.getElementById("status");
                 status.className = "error";
-                status.textContent = `${error.message} Run node build-data.js to create tcgdex-database.json, then open this page through a local web server.`;
+                status.textContent = `${error.message} Ensure tcgdex-database.json is present and open this page through a local web server.`;
+                updateSaveStatus("Collection load failed", "error");
             }
         }
 
@@ -995,6 +1693,26 @@
             searchInput,
             document.getElementById("clear-search")
         );
+        const collectionFileInput = document.getElementById("collection-file-input");
+        document.getElementById("import-collection").addEventListener("click", () => {
+            if (CAN_EDIT_COLLECTION) collectionFileInput.click();
+        });
+        collectionFileInput.addEventListener("change", async () => {
+            if (!CAN_EDIT_COLLECTION) return;
+            const [file] = collectionFileInput.files || [];
+            if (!file) return;
+            await importCollectionFile(file);
+            collectionFileInput.value = "";
+        });
+        document.getElementById("save-collection").addEventListener("click", saveCollectionToFile);
+        window.addEventListener("beforeunload", event => {
+            if (!CAN_EDIT_COLLECTION || !collectionDirty) return;
+            clearTimeout(collectionDraftPersistTimeout);
+            collectionDraftPersistTimeout = null;
+            persistCollectionDraft();
+            event.preventDefault();
+            event.returnValue = "";
+        });
         addSearchClearButton(pokedexSearch, document.getElementById("clear-pokedex-search"));
         addSearchClearButton(masterSetSearch, document.getElementById("clear-master-set-search"));
         document.getElementById("add-binder-page").addEventListener("click", addBinderPage);
@@ -1002,6 +1720,7 @@
         document.getElementById("binder-card-search").addEventListener("input", renderBinderPickerResults);
         document.getElementById("binder-planning-mode").addEventListener("change", renderBinderPickerResults);
         document.getElementById("clear-binder-pocket").addEventListener("click", () => {
+            if (!CAN_EDIT_COLLECTION) return;
             const page = binderPages.find(item => item.id === binderPickerTarget?.pageId);
             if (!page) return;
             page.slots[binderPickerTarget.slotIndex] = null;
@@ -1091,6 +1810,11 @@
             }
             if (activeTab.id === "pokedex-tab" && !pokedexRendered) renderPokedex();
             if (activeTab.id === "binder-tab") renderBinder();
+            if (activeTab.id === "collection-tab" && collectionNeedsRender) {
+                populateFilters();
+                renderCollection();
+                collectionNeedsRender = false;
+            }
         }
 
         loadCollection();

@@ -22,6 +22,7 @@
         }
 
         body.dialog-open { overflow: hidden; }
+        body:not(.local-edit-mode) .collection-edit-control { display: none !important; }
 
         button, input, select { font: inherit; }
         button { color: inherit; }
@@ -33,6 +34,13 @@
             border-bottom: 1px solid var(--border);
             background: linear-gradient(135deg, #1d2b39, #111a24 70%);
         }
+
+        .app-header-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
+        .save-collection-control { display: flex; align-items: center; gap: 12px; }
+        #save-status { color: var(--muted); font-size: .8rem; }
+        #save-status.unsaved { color: #ffe3a3; }
+        #save-status.error { color: var(--danger); }
+        #save-collection:disabled { opacity: .6; cursor: not-allowed; }
 
         .eyebrow {
             margin: 0 0 8px;
@@ -92,6 +100,10 @@
 
         .view-tab:focus-visible { outline-offset: -2px; }
         .view-panel[hidden] { display: none; }
+
+        .collection-file-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; color: var(--muted); font-size: .82rem; }
+        .collection-file-controls code { color: var(--text); }
+        #collection-file-status.error { color: var(--danger); }
 
         .view-heading {
             display: flex;
@@ -271,6 +283,97 @@
             font-size: .76rem;
         }
 
+        .collection-card-actions { display: flex; align-items: start; gap: 6px; margin-top: 10px; }
+        .add-card-button, .add-variant-button {
+            min-width: 0;
+            min-height: 34px;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface-raised);
+            color: var(--text);
+            cursor: pointer;
+            font-size: .74rem;
+        }
+
+        .add-card-button { display: grid; flex: 1; place-items: center; font-size: 1.65rem; line-height: 1; }
+        .add-variant-button { width: 36px; padding: 4px; font-size: 1rem; }
+        .add-card-button:hover, .add-variant-button:hover { border-color: var(--accent); }
+        .add-variant-control { display: flex; justify-content: end; }
+
+        .floating-option-menu {
+            position: fixed;
+            z-index: 10000;
+            display: grid;
+            width: max-content;
+            min-width: 140px;
+            max-width: min(220px, calc(100vw - 16px));
+            max-height: min(280px, 50vh);
+            overflow-y: auto;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface-raised);
+            box-shadow: 0 10px 28px #0008;
+        }
+
+        .floating-option {
+            min-height: 34px;
+            padding: 7px 10px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            font-size: .82rem;
+            text-align: left;
+            overflow-wrap: anywhere;
+        }
+
+        .floating-option:hover, .floating-option:focus-visible {
+            outline: none;
+            background: #304353;
+        }
+
+        .variant-quantity-list { display: grid; gap: 7px; }
+        .variant-quantity-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .variant-quantity-row > strong { min-width: 0; font-size: .82rem; }
+        .variant-quantity-control { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+        .variant-quantity-button {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-raised);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+        }
+
+        .variant-quantity-button:hover:not(:disabled) { border-color: var(--accent); }
+        .variant-quantity-button:disabled { cursor: not-allowed; opacity: .45; }
+        .variant-quantity-input {
+            width: 58px;
+            min-height: 30px;
+            padding: 3px 5px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--page);
+            color: var(--text);
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
         .owned-count {
             padding: 3px 8px;
             border-radius: 999px;
@@ -375,17 +478,21 @@
         .pokemon-card .card-info { display: grid; gap: 7px; }
         .pokemon-card .card-bottom { margin-top: 0; }
         .pokemon-card .card-number { color: var(--accent); font-variant-numeric: tabular-nums; }
-        .featured-card-select {
-            width: 100%;
-            min-width: 0;
-            min-height: 36px;
-            padding: 6px 8px;
+        .featured-card-control { display: flex; min-width: 0; gap: 6px; }
+        .featured-card-button {
+            min-width: 36px;
+            min-height: 34px;
+            padding: 4px;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: var(--surface-raised);
-            color: var(--text);
+            color: var(--accent-strong);
+            cursor: pointer;
+            font-size: 1.25rem;
+            line-height: 1;
         }
 
+        .featured-card-button:hover { border-color: var(--accent); }
         .featured-card-label { color: var(--muted); font-size: .73rem; }
 
         .binder-page-controls {
@@ -452,6 +559,7 @@
 
         .binder-pocket-filled { border-color: #627b8c; }
         .binder-pocket-empty { border-style: dashed; color: var(--muted); gap: 4px; font-size: .78rem; }
+        .binder-pocket:disabled { color: inherit; cursor: default; opacity: 1; }
         .binder-pocket-plus { color: var(--accent); font-size: 1.8rem; line-height: 1; }
         .binder-card-image { display: block; width: 100%; height: 100%; }
         .binder-pocket-dragging { opacity: .4; }
@@ -590,6 +698,9 @@
         @media (max-width: 560px) {
             .shell { width: min(100% - 28px, 1180px); }
             header { padding-top: 34px; }
+            .app-header-row { align-items: start; flex-direction: column; gap: 12px; }
+            .save-collection-control { width: 100%; justify-content: space-between; }
+            .collection-file-controls { align-items: start; flex-wrap: wrap; }
             .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
             .card-info { padding: 10px; }
             .detail-layout { grid-template-columns: 1fr; }
