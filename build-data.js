@@ -5,7 +5,18 @@ const API_ROOT = "https://api.tcgdex.net/v2/en";
 const CONCURRENCY = 5;
 const SET_ID_MAPPINGS = {
     base6: "lc",
-    mcd10p: "2021swsh"
+    mcd1p: "2011bw",
+    mcd2p: "2012bw",
+    mcd4p: "2014xy",
+    mcd5p: "2015xy",
+    mcd6p: "2016xy",
+    mcd7p: "2017sm",
+    mcd8p: "2018sm",
+    mcd9p: "2019sm",
+    mcd10p: "2021swsh",
+    mcd11p: "2022swsh",
+    mcd12p: "2023sv",
+    mcd13p: "2024sv"
 };
 const [outputArg = "tcgdex-database.json"] = process.argv.slice(2);
 const outputPath = path.resolve(outputArg);

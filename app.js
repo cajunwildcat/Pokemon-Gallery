@@ -1,7 +1,19 @@
         const SET_ID_MAPPINGS = {
             base6: "lc",
-            mcd10p: "2021swsh"
+            mcd1p: "2011bw",
+            mcd2p: "2012bw",
+            mcd4p: "2014xy",
+            mcd5p: "2015xy",
+            mcd6p: "2016xy",
+            mcd7p: "2017sm",
+            mcd8p: "2018sm",
+            mcd9p: "2019sm",
+            mcd10p: "2021swsh",
+            mcd11p: "2022swsh",
+            mcd12p: "2023sv",
+            mcd13p: "2024sv"
         };
+        const NATIONAL_POKEDEX_SIZE = 1025;
         const COLLECTION_STORAGE_KEY = "pokemon-gallery-collection-draft";
         const LOCAL_EDIT_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
         const CAN_EDIT_COLLECTION = LOCAL_EDIT_HOSTS.has(location.hostname);
@@ -812,7 +824,15 @@
                 pokedexGrid.append(empty);
             }
             for (const entry of entries) pokedexGrid.append(renderPokedexEntry(entry));
-            document.getElementById("pokedex-count").textContent = `${entries.length} of ${pokedexEntries.length} Pokémon`;
+            updatePokedexCount();
+        }
+
+        function updatePokedexCount() {
+            const ownedCount = pokedexEntries.filter(entry =>
+                entry.dexId <= NATIONAL_POKEDEX_SIZE && entry.ownedCards.length > 0
+            ).length;
+            document.getElementById("pokedex-count").textContent =
+                `${ownedCount} / ${NATIONAL_POKEDEX_SIZE} Pokémon collected`;
         }
 
         function renderPokedexEntry(entry) {
@@ -1037,6 +1057,7 @@
                     pokedexEntriesByCardId.get(cardId).push(entry);
                 }
             }
+            updatePokedexCount();
             updateCollectionSummary();
             populateFilters();
             renderCollection();
@@ -1044,13 +1065,14 @@
             renderMasterSetList();
             renderBinder();
             if (pokedexRendered) renderPokedex();
+        }
 
-            const missingCount = collection.filter(card => !card.details).length;
-            const status = document.getElementById("status");
-            status.className = missingCount ? "error" : "";
-            status.textContent = missingCount
-                ? `${missingCount} card${missingCount === 1 ? "" : "s"} missing from the local database. Update tcgdex-database.json and reload.`
-                : "";
+        function logMissingCollectionCards() {
+            for (const card of collection) {
+                if (!card.details) {
+                    console.error(`Card ${card.cardId} is missing from tcgdex-database.json.`);
+                }
+            }
         }
 
         function updateRenderedCardCollectionState(cardElement, card) {
@@ -1130,6 +1152,7 @@
                 const existingEntry = pokedexGrid.querySelector(`.pokemon-card[data-dex-id="${entry.dexId}"]`);
                 if (existingEntry) existingEntry.replaceWith(renderPokedexEntry(entry));
             }
+            updatePokedexCount();
             if (isNewUniqueCard && document.getElementById("binder-tab").getAttribute("aria-selected") === "true") {
                 renderBinder();
             }
@@ -1678,6 +1701,7 @@
                     }
                 }
                 applyCollectionDocument(sourceDocument, { dirty });
+                logMissingCollectionCards();
                 initialLoadComplete = true;
                 updateSaveStatus(dirty ? "Unsaved changes" : "Saved", dirty ? "unsaved" : "");
             } catch (error) {
